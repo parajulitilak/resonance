@@ -14,14 +14,14 @@ def ladder_peaks(f0, b=0.0, ns=(1, 2, 3, 4, 5), snr=40.0):
 
 
 def test_harmonic_fit_recovers_fundamental_and_stiffness():
-    fit = fit_harmonics(ladder_peaks(12.5, b=3e-4, ns=(1, 2, 3, 4, 5, 6)), fs=240)
+    fit = fit_harmonics(ladder_peaks(12.5, b=3e-4, ns=(1, 2, 3, 4, 5, 6)), fs=240, f0_range=(3, 60))
     assert fit.ok, fit.reasons
     assert fit.f0 == pytest.approx(12.5, rel=1e-4)
     assert fit.b == pytest.approx(3e-4, rel=0.05)
 
 
 def test_harmonic_fit_prefers_true_fundamental_over_subharmonic():
-    fit = fit_harmonics(ladder_peaks(10.0, ns=(1, 3, 5, 7)), fs=240)  # pluck at mid-span: odd modes only
+    fit = fit_harmonics(ladder_peaks(10.0, ns=(1, 3, 5, 7)), fs=240, f0_range=(3, 60))  # mid-span pluck
     assert fit.f0 == pytest.approx(10.0, rel=1e-3)
 
 

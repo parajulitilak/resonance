@@ -21,9 +21,11 @@ class TimeBase:
     t: np.ndarray            # seconds of real (capture) time, starting at 0, one per frame
     fps: float               # median capture rate
     nominal_fps: float       # what the container claims
-    jitter: float            # std of frame interval / median interval
+    jitter: float            # std of frame interval / median interval (after de-quantising)
     time_scale: float        # factor applied to container time to get capture time
     source: str
+    ramped: bool = False     # the frame interval changes during the clip (e.g. exported slow motion)
+    dequantised: bool = False
 
     @property
     def variable(self) -> bool:
@@ -51,25 +53,48 @@ def capture_fps_tag(path: str) -> float | None:
     return None
 
 
-def frame_times(path: str, capture_fps: float | None = None) -> TimeBase:
-    """Presentation timestamps of every video frame, rescaled to capture time.
+def _decoded_frame_times(path: str) -> np.ndarray:
+    """Timestamps of the frames the decoder actually outputs (edit lists and discarded packets respected)."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                          "frame=best_effort_timestamp_time", "-of", "csv=p=0", path],
+                         capture_output=True, text=True, check=True).stdout
+    vals = [float(v.split(",")[0]) for v in out.split() if v and v.split(",")[0] not in ("N/A", "")]
+    return np.array(vals)
 
-    `capture_fps` overrides the detected capture rate (use it when a slow-motion
-    file was exported at playback speed).
+
+def frame_times(path: str, capture_fps: float | None = None) -> TimeBase:
+    """Per-frame capture times, aligned with the frames `video.read_frames` yields.
+
+    `capture_fps` overrides the detected capture rate (use it when a slow-motion file was exported at
+    playback speed and its timestamps are uniform).
     """
-    info = _probe_json(path, ["-select_streams", "v:0", "-show_entries",
-                              "packet=pts_time:stream=avg_frame_rate,r_frame_rate"])
-    pts = np.array(sorted(float(p["pts_time"]) for p in info.get("packets", [])
-                          if p.get("pts_time") not in (None, "N/A")))
-    if pts.size < 2:
-        raise ValueError(f"no frame timestamps in {path}")
+    info = _probe_json(path, ["-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate"])
     num, den = info["streams"][0]["avg_frame_rate"].split("/")
     nominal = float(num) / float(den) if float(den) else float("nan")
+    pts = _decoded_frame_times(path)
+    if pts.size < 2:
+        raise ValueError(f"no frame timestamps in {path}")
     t = pts - pts[0]
-    dt = np.diff(t)
-    container_fps = 1.0 / float(np.median(dt))
+    n = t.size
+    idx = np.arange(n)
 
-    scale, source = 1.0, "container timestamps"
+    # Ramps: a slowed middle with real-time ends shows up as a step in the local frame interval.
+    dt = np.diff(t)
+    k = min(31, max(5, (n // 10) | 1))
+    local = np.array([np.median(dt[max(0, i - k // 2): i + k // 2 + 1]) for i in range(0, dt.size, max(1, k // 2))])
+    ramped = bool(local.size > 2 and local.max() / max(local.min(), 1e-9) > 1.3)
+
+    # Coarse timescales (QuickTime 1/600 at 240 fps) alternate 2- and 3-tick intervals: fit a line
+    # through time vs frame index when the scatter is only quantisation and there are no real gaps.
+    dequant = False
+    if not ramped:
+        a, c = np.polyfit(idx, t, 1)
+        resid = t - (a * idx + c)
+        if np.std(resid) < 0.35 * a and dt.max() < 1.6 * a:
+            t, dequant = a * idx + c - c, True
+
+    container_fps = (n - 1) / (t[-1] - t[0])
+    scale, source = 1.0, "decoded frame timestamps"
     tag = capture_fps_tag(path)
     if capture_fps:
         scale, source = container_fps / capture_fps, f"override capture_fps={capture_fps:g}"
@@ -78,5 +103,6 @@ def frame_times(path: str, capture_fps: float | None = None) -> TimeBase:
     t = t * scale
     dt = np.diff(t)
     med = float(np.median(dt))
-    return TimeBase(t=t, fps=1.0 / med, nominal_fps=nominal, jitter=float(np.std(dt) / med),
-                    time_scale=scale, source=source)
+    return TimeBase(t=t, fps=(n - 1) / (t[-1] - t[0]), nominal_fps=nominal, jitter=float(np.std(dt) / med),
+                    time_scale=scale, source=source + (", de-quantised" if dequant else ""),
+                    ramped=ramped, dequantised=dequant)

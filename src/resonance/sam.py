@@ -26,7 +26,8 @@ from .members import Member
 
 API = "https://api.meta.ai/v1/responses"
 
-BOX = re.compile(r"<\|box;x1=(\d+);y1=(\d+);x2=(\d+);y2=(\d+);w=(\d+);h=(\d+)(?:;c=([\d.]+))?\|>")
+NUM = r"(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)"
+BOX_KV = re.compile(r"([a-z0-9]+)=" + NUM)
 RECORD = re.compile(r"(?:^|,)(\d+)(<\|box;[^|]*\|>)(<\|mask;x=0;y=0(?:;c=[\d.]+)?;data=(\d+),(\d+),(.)(.*?)\|>)"
                     r"(?=,\d+<\|box|$)", re.S)
 FRAME = re.compile(r"^<(\d+)f>")
@@ -51,10 +52,11 @@ def parse_line(line: str) -> list[Detection]:
     frame, body = int(m.group(1)), line.strip()[m.end():]
     out = []
     for r in RECORD.finditer(body):
-        b = BOX.match(r.group(2))
-        x1, y1, x2, y2, w, h = (int(v) for v in b.groups()[:6])
-        conf = float(b.group(7)) if b.group(7) else None
-        out.append(Detection(frame, int(r.group(1)), (x1, y1, x2, y2), (w, h), conf,
+        kv = {k: float(v) for k, v in BOX_KV.findall(r.group(2))}  # tolerant: floats, extra keys, any order
+        if not {"x1", "y1", "x2", "y2", "w", "h"} <= set(kv):
+            continue
+        box = tuple(int(round(kv[k])) for k in ("x1", "y1", "x2", "y2"))
+        out.append(Detection(frame, int(r.group(1)), box, (int(kv["w"]), int(kv["h"])), kv.get("c"),
                              (int(r.group(4)), int(r.group(5))), r.group(6), r.group(7)))
     return out
 
@@ -94,8 +96,11 @@ def segment_image(img: np.ndarray, concept: str, timeout: int = 120) -> list[Det
                 ev = json.loads(payload)
             except json.JSONDecodeError:
                 continue
-            if ev.get("type") == "response.output_text.delta":
+            kind = ev.get("type", "")
+            if kind == "response.output_text.delta":
                 text.append(ev.get("delta", ""))
+            elif kind in ("error", "response.failed", "response.incomplete"):
+                raise RuntimeError(f"SAM 3.1 stream {kind}: {json.dumps(ev)[:300]}")
     return parse_output("\n".join(text))  # one delta per frame line
 
 
@@ -114,16 +119,16 @@ def member_from_box(name: str, det: Detection, gray: np.ndarray, **kw) -> Member
     """Thin box → its long axis; wide box → whichever diagonal shows a line."""
     x1, y1, x2, y2 = det.box
     w, h = x2 - x1 + 1, y2 - y1 + 1
-    if w <= 0.15 * h:   # near-vertical
+    if w <= 0.05 * h or w <= 12:   # within ~3 degrees of vertical, or a thin box
         cx = 0.5 * (x1 + x2)
-        return Member(name, (cx, y1), (cx, y2), half_width=max(6.0, 1.5 * w), **kw)
-    if h <= 0.15 * w:   # near-horizontal
+        return Member(name, (cx, y1), (cx, y2), half_width=float(np.clip(1.5 * w, 6, 20)), **kw)
+    if h <= 0.05 * w or h <= 12:   # within ~3 degrees of horizontal
         cy = 0.5 * (y1 + y2)
-        return Member(name, (x1, cy), (x2, cy), half_width=max(6.0, 1.5 * h), **kw)
+        return Member(name, (x1, cy), (x2, cy), half_width=float(np.clip(1.5 * h, 6, 20)), **kw)
     a = _line_contrast(gray, (x1, y1), (x2, y2))
     b = _line_contrast(gray, (x1, y2), (x2, y1))
     p0, p1 = ((x1, y1), (x2, y2)) if a >= b else ((x1, y2), (x2, y1))
-    return Member(name, p0, p1, half_width=8.0, **kw)
+    return Member(name, p0, p1, half_width=12.0, **kw)
 
 
 def find_members(frame_rgb: np.ndarray, concept: str = "rope", prefix: str = "m",

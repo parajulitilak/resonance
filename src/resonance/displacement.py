@@ -27,6 +27,7 @@ class Tracking:
     disp: dict[str, np.ndarray]          # name -> [frames, stations] pixels along the normal
     quality: dict[str, dict]             # name -> {"contrast": grey levels, "noise_px": position noise}
     shake: np.ndarray | None             # [frames, 2] anchor shift in pixels (x, y)
+    weights: dict[str, np.ndarray] | None = None  # name -> per-station weight (tracking contrast)
 
     @property
     def t(self) -> np.ndarray:
@@ -68,12 +69,13 @@ def phase_shift(ref_fft: np.ndarray, img: np.ndarray, win: np.ndarray) -> tuple[
     return dx, dy
 
 
-def _centroids(profile: np.ndarray, offsets: np.ndarray, polarity: float) -> tuple[np.ndarray, np.ndarray]:
+def _centroids(profile: np.ndarray, offsets: np.ndarray, polarity) -> tuple[np.ndarray, np.ndarray]:
     """Contrast-weighted centroid per station; also returns peak contrast per station."""
     j = profile.shape[1]
     edge = max(2, j // 5)
     bg = np.median(np.concatenate([profile[:, :edge], profile[:, -edge:]], 1), axis=1, keepdims=True)
-    c = np.clip(polarity * (profile - bg), 0, None)
+    pol = np.asarray(polarity, float).reshape(-1, 1) if np.ndim(polarity) else polarity
+    c = np.clip(pol * (profile - bg), 0, None)
     peak = c.max(axis=1, keepdims=True)
     c = np.clip(c - 0.25 * peak, 0, None)
     w = c.sum(1)
@@ -86,7 +88,9 @@ def track(path: str, members: list[Member], anchor: tuple[int, int, int, int] | 
     """Track every member through the video. `anchor` is a static box (x0, y0, x1, y1)."""
     tb = frame_times(path, capture_fps)
     grids = {m.name: m.sample_grid(n_stations) for m in members}
-    polarity: dict[str, float] = {}
+    polarity: dict[str, np.ndarray] = {}
+    warm: dict[str, list] = {m.name: [] for m in members}
+    n_warm = 12
     out: dict[str, list] = {m.name: [] for m in members}
     contrast: dict[str, list] = {m.name: [] for m in members}
     shake, ref_fft, win = [], None, None
@@ -105,13 +109,26 @@ def track(path: str, members: list[Member], anchor: tuple[int, int, int, int] | 
             xs, ys, _, o = grids[m.name]
             prof = map_coordinates(f, [ys.ravel(), xs.ravel()], order=1, mode="nearest").reshape(xs.shape)
             if m.name not in polarity:
-                j = prof.shape[1]
-                centre = np.median(prof[:, j // 2 - 1: j // 2 + 2])
-                edges = np.median(np.concatenate([prof[:, :j // 5], prof[:, -(j // 5):]], 1))
-                polarity[m.name] = -1.0 if centre < edges else 1.0
+                # per station: the sign of the strongest deviation from the profile edges, over the
+                # first frames (robust to an off-axis start or a background that changes along the member)
+                warm[m.name].append(prof)
+                if len(warm[m.name]) < n_warm:
+                    continue
+                med = np.median(np.stack(warm[m.name]), 0)
+                j = med.shape[1]
+                bg = np.median(np.concatenate([med[:, :j // 5], med[:, -(j // 5):]], 1), axis=1, keepdims=True)
+                dev = med - bg
+                pol = np.sign(dev[np.arange(dev.shape[0]), np.argmax(np.abs(dev), 1)])
+                pol[pol == 0] = -1.0
+                polarity[m.name] = pol
+                for wp in warm[m.name]:
+                    cen, pk = _centroids(wp, o, polarity[m.name])
+                    out[m.name].append(cen)
+                    contrast[m.name].append(pk)
+                continue
             cen, pk = _centroids(prof, o, polarity[m.name])
             out[m.name].append(cen)
-            contrast[m.name].append(np.median(pk))
+            contrast[m.name].append(pk)
     sh = np.array(shake) if shake else None
     disp = {}
     for m in members:
@@ -119,11 +136,16 @@ def track(path: str, members: list[Member], anchor: tuple[int, int, int, int] | 
         if sh is not None:
             d = d - (sh @ m.normal)[:, None]
         disp[m.name] = d
-    quality = {}
+    quality, weights = {}, {}
     for m in members:
         d = disp[m.name]
-        # second difference / sqrt(6) approximates white position noise at high frame rates
+        cs = np.median(np.array(contrast[m.name]), 0)        # per-station contrast
+        w = np.clip(cs / max(np.median(cs), 1e-6), 0, 1) ** 2
+        w[cs < 0.3 * np.median(cs)] = 0.0                  # stations that lost the member
+        weights[m.name] = w
+        # second difference / sqrt(6): a high-frequency motion proxy (includes signal), not pure noise
         hf = float(np.std(np.diff(d, 2, axis=0)) / np.sqrt(6)) if d.shape[0] > 3 else float("nan")
-        quality[m.name] = {"contrast": float(np.median(contrast[m.name])), "noise_px": hf}
+        quality[m.name] = {"contrast": float(np.median(cs)), "hf_motion_px": hf,
+                           "stations_used": int((w > 0).sum()), "stations": int(w.size)}
     stations = next(iter(grids.values()))[2]
-    return Tracking(tb, members, stations, disp, quality, sh)
+    return Tracking(tb, members, stations, disp, quality, sh, weights)

@@ -21,7 +21,19 @@ class Member:
     half_width: float = 8.0          # pixels sampled each side of the axis
     length_m: float | None = None    # free length between supports, metres
     mass_per_m: float | None = None  # kg per metre
+    f0_range: tuple[float, float] | None = None       # coarse prior on the fundamental, Hz
+    tension_range: tuple[float, float] | None = None  # coarse prior on tension, N (needs L and m)
     meta: dict = field(default_factory=dict)
+
+    def expected_f0(self) -> tuple[float, float] | None:
+        """The alias guard's prior: explicit f0 range, or one implied by a plausible tension range."""
+        if self.f0_range:
+            return self.f0_range
+        if self.tension_range and self.length_m and self.mass_per_m:
+            lo, hi = self.tension_range
+            f = lambda t: (t / self.mass_per_m) ** 0.5 / (2 * self.length_m)  # noqa: E731
+            return f(lo), f(hi)
+        return None
 
     @property
     def axis(self) -> np.ndarray:
@@ -69,11 +81,15 @@ def from_mask(name: str, mask: np.ndarray, trim: float = 0.03, **kw) -> Member:
 
 
 def parse_member(spec: str) -> Member:
-    """`name:x0,y0,x1,y1[:L=1.8][:m=0.022][:w=8]` (pixels, metres, kg/m)."""
+    """`name:x0,y0,x1,y1[:L=1.8][:m=0.022][:w=8][:T=5-200][:f=3-60]` (pixels, metres, kg/m, N, Hz)."""
     parts = spec.split(":")
     name, coords = parts[0], [float(v) for v in parts[1].split(",")]
-    kw = {}
+    kw: dict = {}
     for p in parts[2:]:
         k, v = p.split("=")
-        kw[{"L": "length_m", "m": "mass_per_m", "w": "half_width"}[k]] = float(v)
+        if k in ("T", "f"):
+            lo, hi = (float(x) for x in v.split("-"))
+            kw["tension_range" if k == "T" else "f0_range"] = (lo, hi)
+        else:
+            kw[{"L": "length_m", "m": "mass_per_m", "w": "half_width"}[k]] = float(v)
     return Member(name, (coords[0], coords[1]), (coords[2], coords[3]), **kw)

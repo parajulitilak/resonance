@@ -21,11 +21,12 @@ G = 9.80665
 
 @dataclass
 class TensionEstimate:
-    tension_n: float
-    sigma_n: float
+    tension_n: float            # pinned-end (taut-string) estimate
+    sigma_n: float              # measurement uncertainty (L, m, f0)
     xi: float | None            # non-dimensional bending stiffness (None if no measurable stretch)
     reliable: bool
     note: str
+    clamped_n: float | None = None  # same data read with clamped ends: the low end of the bracket
 
     @property
     def rel_sigma(self) -> float:
@@ -42,10 +43,21 @@ def tension(f0: float, f0_sigma: float, b: float, length_m: float, mass_per_m: f
     t = taut_string_tension(f0, length_m, mass_per_m)
     rel = math.sqrt((2 * length_sigma / length_m) ** 2 + mass_rel_sigma ** 2 + (2 * f0_sigma / f0) ** 2)
     xi = math.pi / math.sqrt(b) if b > 1e-7 else None
-    if xi is not None and xi < 10:
+    if xi is None:
+        return TensionEstimate(t, t * rel, None, True, "taut-string regime (no measurable stiffness)")
+    # Clamped ends raise every mode by ~(1 + 2/xi + 4/xi^2), which the fit folds into f0 (Mehrabi &
+    # Tabatabai 1998; Zui et al. 1996). Without knowing the end fixity, T lies between the two readings.
+    clamped = t / (1 + 2 / xi + 4 / xi ** 2) ** 2
+    spread = (t - clamped) / t
+    if xi < 10:
         return TensionEstimate(t, t * rel, xi, False,
-                               f"bending stiffness significant (xi = {xi:.1f} < 10): report relative changes only")
-    return TensionEstimate(t, t * rel, xi, True, "taut-string regime")
+                               f"bending stiffness significant (xi = {xi:.1f} < 10): report relative changes only",
+                               clamped)
+    if spread > 0.05:
+        return TensionEstimate(t, t * rel, xi, False,
+                               f"end fixity matters (xi = {xi:.0f}): T between {clamped:.1f} N (clamped) "
+                               f"and {t:.1f} N (pinned)", clamped)
+    return TensionEstimate(t, t * rel, xi, True, f"taut-string regime (xi = {xi:.0f})", clamped)
 
 
 def sag_frequency(sag_m: float) -> float:

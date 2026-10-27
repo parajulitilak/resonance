@@ -44,10 +44,16 @@ class CableProfile:
         return np.polyval(self.coef, x)
 
 
-def fit_profile(gray: np.ndarray, box: tuple[int, int, int, int], dark: bool = True,
+def fit_profile(gray: np.ndarray, box: tuple[int, int, int, int], dark: bool | None = None,
                 band: int = 6) -> CableProfile:
-    """Trace the cable column by column inside its box and fit a parabola."""
+    """Trace the cable column by column inside its box and fit a parabola.
+
+    `dark=None` decides polarity from the box: a cable against the sky is darker than its surroundings.
+    """
     x1, y1, x2, y2 = box
+    if dark is None:
+        patch = gray[y1:y2 + 1, x1:x2 + 1]
+        dark = abs(float(patch.min()) - float(np.median(patch))) >= abs(float(patch.max()) - float(np.median(patch)))
     xs = np.arange(x1, x2 + 1, 2, dtype=float)
     sub = gray[y1:y2 + 1, :].astype(np.float32)
     ys = []
@@ -131,8 +137,9 @@ def sag_check(video: str, box: tuple[int, int, int, int], span_m: float, capture
     pk = [p for p in peaks(sp, f_min=f_band[0], min_snr=6.0) if p.f <= f_band[1]]
     measured, anti, note = None, None, ""
     if pk:
-        # the antisymmetric mode: node at mid-span, quarter spans move in opposite directions
-        for p in sorted(pk, key=lambda p: abs(p.f - pred)):
+        # the antisymmetric mode: node at mid-span, quarter spans move in opposite directions.
+        # Take the LOWEST such peak, not the one nearest the prediction (that would bias toward agreement).
+        for p in sorted(pk, key=lambda p: p.f):
             shp = mode_shape(sp, p.f)
             q1, q3 = shp[np.argmin(np.abs(s - 0.25))], shp[np.argmin(np.abs(s - 0.75))]
             mid = shp[np.argmin(np.abs(s - 0.5))]
@@ -140,8 +147,8 @@ def sag_check(video: str, box: tuple[int, int, int, int], span_m: float, capture
                 measured, anti = p.f, True
                 break
         if measured is None:
-            measured, anti = min(pk, key=lambda p: abs(p.f - pred)).f, False
-            note = "nearest peak is not antisymmetric; treat as unconfirmed"
+            measured, anti = None, False
+            note = "no peak with an antisymmetric shape (node at mid-span): sway frequency unconfirmed"
     else:
         note = f"no clear sway peak between {f_band[0]} and {f_band[1]} Hz"
     agree = None if measured is None else measured / pred
