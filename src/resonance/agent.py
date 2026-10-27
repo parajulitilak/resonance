@@ -27,8 +27,9 @@ ropes or bridge hangers taken from a phone video and prepare a report for a huma
 
 Rules:
 1. Use only numbers returned by tools, and cite the field you used (for example `ladder.f0_hz`).
-2. If a member's harmonic ladder is not verified (`ladder.ok` is false), make no frequency or tension \
-claim for it. Request a re-shoot with concrete instructions (frame rate, distance, viewing angle, how to \
+2. `ladder.status` is verified, provisional or refused. Provisional members (only two harmonics, at an \
+exact 2:1 ratio) may be reported, but the statement must contain the word "provisional" and you must also \
+request a re-shoot. Refused members get no frequency or tension claim; request a re-shoot with concrete instructions (frame rate, distance, viewing angle, how to \
 excite the member, lighting), based on the refusal reasons.
 3. In field mode, never state the absolute tension of a member. Compare members with each other and with \
 design values given in the context, and flag outliers for inspection.
@@ -74,7 +75,8 @@ TOOLS = [
 
 def _member_summary(m: dict) -> dict:
     lad, ten = m["ladder"], m.get("tension") or {}
-    return {"name": m["name"], "ladder_ok": lad["ok"], "f0_hz": None if not lad["ok"] else round(lad["f0_hz"], 4),
+    return {"name": m["name"], "ladder_status": lad.get("status"),
+            "f0_hz": None if lad.get("status") == "refused" else round(lad["f0_hz"], 4),
             "modes": [x["n"] for x in lad["modes"]], "refusal": lad["reasons"],
             "tension_n": None if ten.get("value_n") is None else round(ten["value_n"], 2),
             "tension_sigma_n": None if ten.get("sigma_n") is None else round(ten["sigma_n"], 2),
@@ -165,9 +167,13 @@ def enforce_rules(report: dict, actions: dict, mode: str) -> list[dict]:
         if m is None:
             out.append({"member": item["name"], "rule": "unknown member"})
             continue
-        if not m["ladder"]["ok"] and item["status"] != "refused":
+        st = m["ladder"].get("status", "verified" if m["ladder"]["ok"] else "refused")
+        if st == "refused" and item["status"] != "refused":
             out.append({"member": item["name"], "rule": "claim on unverified ladder → forced to refused"})
             item["status"] = "refused"
+        if st == "provisional" and "provisional" not in item["statement"].lower():
+            out.append({"member": item["name"], "rule": "provisional result not labelled → needs engineer"})
+            item["status"] = "flagged"
         if mode == "field" and re.search(r"\d\s*(k?N)\b", item["statement"]):
             out.append({"member": item["name"], "rule": "absolute tension in field mode → needs engineer"})
             item["status"] = "flagged"

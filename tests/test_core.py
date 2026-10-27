@@ -81,3 +81,8 @@ def test_bench_end_to_end(tmp_path):
     assert all(r["ladder_ok"] for r in rows)
     assert max(abs(r["err"]) for r in rows) < 0.02
     json.dumps(rep, default=float)
+
+
+def test_two_clean_harmonics_are_provisional_not_verified():
+    fit = fit_harmonics(ladder_peaks(8.4, ns=(1, 2)), fs=240)
+    assert not fit.ok and fit.provisional and fit.status == "provisional"

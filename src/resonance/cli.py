@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> None:
         lad, ten = m["ladder"], m.get("tension") or {}
         val = ten.get("value_n")
         print(f"{m['name']:>8}  f0={lad['f0_hz']:.3f} Hz  modes={[x['n'] for x in lad['modes']]}  "
-              f"ladder={'OK' if lad['ok'] else 'REFUSED'}  "
+              f"ladder={lad['status'].upper()}  "
               + (f"T={val:.1f}±{ten['sigma_n']:.1f} N" if val else ten.get("note", "")))
     if truth:
         for r in rep["truth_comparison"]:

@@ -41,7 +41,12 @@ class HarmonicFit:
     rel_residual: float = float("nan")
     explained: float = 0.0          # share of strong-peak power on the ladder
     ok: bool = False
+    provisional: bool = False       # only the 1st and 2nd harmonics, at an exact 2:1 ratio
     reasons: list[str] = field(default_factory=list)
+
+    @property
+    def status(self) -> str:
+        return "verified" if self.ok else ("provisional" if self.provisional else "refused")
 
     @property
     def f0_sigma(self) -> float:
@@ -150,6 +155,10 @@ def fit_harmonics(pk: list[Peak], fs: float, tol: float = 0.025, max_n: int = 16
                        f"{fs:.0f} fps can see ({nyq:.1f} Hz)")
     best.ok = not reasons
     best.reasons = reasons
+    # Two clean harmonics at exactly 2:1 are rarely an aliasing accident: report, but provisionally.
+    if (not best.ok and reasons == [f"only {len(ns)} harmonics on the ladder (need 3)"] and ns == [1, 2]
+            and best.rel_residual < 0.003 and min(m[2] for m in best.modes) >= 20):
+        best.provisional = True
     return best
 
 

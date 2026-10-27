@@ -33,16 +33,17 @@ def analyze_tracking(tr: Tracking) -> dict:
             "name": m.name, "p0": list(m.p0), "p1": list(m.p1), "length_px": m.length_px,
             "quality": tr.quality[m.name],
             "peaks": [asdict(p) for p in pk],
-            "ladder": {"ok": fit.ok, "reasons": fit.reasons, "f0_hz": fit.f0, "f0_sigma_hz": fit.f0_sigma,
+            "ladder": {"ok": fit.ok, "status": fit.status, "reasons": fit.reasons, "f0_hz": fit.f0, "f0_sigma_hz": fit.f0_sigma,
                        "b": fit.b, "rel_residual": fit.rel_residual, "explained": fit.explained,
                        "modes": [{"n": n, "f_hz": f, "snr": s} for n, f, s in fit.modes]},
         }
         if fit.ok:
             entry["mode_nodes"] = {str(n): count_nodes(mode_shape(sp, f)) for n, f, _ in fit.modes[:4]}
-        if fit.ok and m.length_m and m.mass_per_m:
+        if (fit.ok or fit.provisional) and m.length_m and m.mass_per_m:
             est = tension(fit.f0, fit.f0_sigma, fit.b, m.length_m, m.mass_per_m)
             entry["tension"] = {"value_n": est.tension_n, "sigma_n": est.sigma_n, "xi": est.xi,
-                                "reliable": est.reliable, "note": est.note,
+                                "reliable": est.reliable and fit.ok, "provisional": fit.provisional,
+                                "note": est.note if fit.ok else "provisional: only 2 harmonics; re-shoot to confirm",
                                 "inputs": {"length_m": m.length_m, "mass_per_m": m.mass_per_m}}
         elif not fit.ok:
             entry["tension"] = {"value_n": None, "note": "refused: " + "; ".join(fit.reasons)}
