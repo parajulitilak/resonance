@@ -30,9 +30,15 @@ Known limits: shake removal is translation-only (camera-coincident peaks are rem
 
 ```bash
 export PYTHONPATH=src
+python -m resonance.cli serve                      # web app on http://127.0.0.1:8765
 python -m resonance.cli synth media/bench240.mp4 --fps 240
-python -m resonance.cli analyze media/bench240.mp4 --truth media/bench240.mp4.json
+python -m resonance.cli analyze media/bench240.mp4 --truth media/bench240.mp4.json --hero
+python -m resonance.cli inspect out/run --context @notes.txt --mode bench
+python -m resonance.cli confirm out/take240 out/take120 --out out/confirmed   # second-take alias guard
+python -m resonance.cli approve out/run --by "Engineer Name"
 python -m pytest -q
 ```
+
+Members on the command line: `name:x0,y0,x1,y1:L=1.8:m=0.022:T=5-300` (pixels, metres, kg/m, plausible tension range in N).
 
 Requires Python 3.12, numpy, scipy, Pillow and ffmpeg.
