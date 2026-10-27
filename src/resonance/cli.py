@@ -30,7 +30,29 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--capture-fps", type=float)
     a.add_argument("--out", default="out/run")
 
+    i = sub.add_parser("inspect", help="agent review + independent verification of an analysed run")
+    i.add_argument("run_dir")
+    i.add_argument("--context", default="", help="text, or @file with field notes / design values")
+    i.add_argument("--mode", choices=["bench", "field"], default="bench")
+    i.add_argument("--inspector", choices=["baseten", "meta"], default="baseten")
+    i.add_argument("--verifier", choices=["baseten", "meta"], default="baseten")
+
+    ap_ = sub.add_parser("approve", help="engineer sign-off on an inspection report")
+    ap_.add_argument("run_dir")
+    ap_.add_argument("--by", required=True)
+
     args = ap.parse_args(argv)
+    if args.cmd == "inspect":
+        from .agent import inspect
+        ctx = Path(args.context[1:]).read_text() if args.context.startswith("@") else args.context
+        rep = json.loads((Path(args.run_dir) / "report.json").read_text())
+        md = inspect(rep, ctx, args.run_dir, mode=args.mode, inspector=args.inspector, verifier=args.verifier)
+        print(md.read_text())
+        return
+    if args.cmd == "approve":
+        from .agent import approve
+        print(approve(args.run_dir, args.by).read_text())
+        return
     if args.cmd == "synth":
         t = synth.render(args.out, fps=args.fps, duration=args.duration, seed=args.seed)
         print(json.dumps({"video": args.out, "frames": t["frames"],
