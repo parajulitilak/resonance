@@ -39,6 +39,11 @@ def main(argv: list[str] | None = None) -> None:
     i.add_argument("--inspector", choices=["baseten", "meta"], default="baseten")
     i.add_argument("--verifier", choices=["baseten", "meta"], default="baseten")
 
+    c = sub.add_parser("confirm", help="cross-check two takes of the same members (second-take alias guard)")
+    c.add_argument("run_a")
+    c.add_argument("run_b")
+    c.add_argument("--out", required=True)
+
     ap_ = sub.add_parser("approve", help="engineer sign-off on an inspection report")
     ap_.add_argument("run_dir")
     ap_.add_argument("--by", required=True)
@@ -50,6 +55,18 @@ def main(argv: list[str] | None = None) -> None:
         rep = json.loads((Path(args.run_dir) / "report.json").read_text())
         md = inspect(rep, ctx, args.run_dir, mode=args.mode, inspector=args.inspector, verifier=args.verifier)
         print(md.read_text())
+        return
+    if args.cmd == "confirm":
+        from .takes import confirm
+        a = json.loads((Path(args.run_a) / "report.json").read_text())
+        b = json.loads((Path(args.run_b) / "report.json").read_text())
+        rep = confirm(a, b)
+        p = save(rep, args.out)
+        for m in rep["members"]:
+            ct = m.get("cross_take", {})
+            print(f"{m['name']:>8}  {m['ladder']['status']:<11} other take: {ct.get('other_status')}  "
+                  f"agree: {ct.get('agree')}")
+        print(f"report: {p}")
         return
     if args.cmd == "approve":
         from .agent import approve
