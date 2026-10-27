@@ -29,6 +29,8 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--anchor", help="static box x0,y0,x1,y1 for shake removal")
     a.add_argument("--capture-fps", type=float)
     a.add_argument("--out", default="out/run")
+    a.add_argument("--hero", action="store_true", help="also render the hero video (out/hero.mp4)")
+    a.add_argument("--speed", type=float, default=0.25, help="hero playback speed (0.25 = 4x slow motion)")
 
     i = sub.add_parser("inspect", help="agent review + independent verification of an analysed run")
     i.add_argument("run_dir")
@@ -69,6 +71,11 @@ def main(argv: list[str] | None = None) -> None:
     if truth:
         rep["truth_comparison"] = compare_with_truth(rep, truth)
     p = save(rep, args.out)
+    if args.hero:
+        from .displacement import track
+        from .render import render_hero
+        tr = track(args.video, members, anchor=anchor, capture_fps=args.capture_fps)
+        print("hero:", render_hero(args.video, tr, rep, Path(args.out) / "hero.mp4", speed=args.speed))
     for m in rep["members"]:
         lad, ten = m["ladder"], m.get("tension") or {}
         val = ten.get("value_n")
