@@ -365,6 +365,7 @@ def inspect(report: dict, context: str, out_dir: str | Path, mode: str = "bench"
                                                 "verdicts": verdicts, "verifier_raw": raw, "mode": mode,
                                                 "error": error,
                                                 "seconds": time.time() - t0}, indent=2, default=float))
+    (out / "approval.json").unlink(missing_ok=True)  # new evidence needs a new sign-off
     md = out / "inspection.md"
     md.write_text(render_markdown(report, actions, violations, verdicts, mode))
     if error:
@@ -377,8 +378,10 @@ def approve(out_dir: str | Path, by: str) -> Path:
     out = Path(out_dir)
     data = json.loads((out / "agent.json").read_text())
     report = json.loads((out / "report.json").read_text())
-    if data.get("approval"):
-        raise RuntimeError("already approved; re-run the inspection to approve new evidence")
+    if (out / "approval.json").exists():
+        prior = json.loads((out / "approval.json").read_text())
+        raise RuntimeError(f"already approved by {prior['by']} on {prior['at']}; re-run the inspection "
+                           "to approve new evidence")
     digest = _evidence_hash(out)
     approval = {"by": by, "at": time.strftime("%Y-%m-%d %H:%M %Z"), "sha256": digest}
     (out / "approval.json").write_text(json.dumps(approval, indent=2))

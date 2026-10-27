@@ -39,6 +39,9 @@ def main(argv: list[str] | None = None) -> None:
     i.add_argument("--inspector", choices=["baseten", "meta"], default="baseten")
     i.add_argument("--verifier", choices=["baseten", "meta"], default="baseten")
 
+    sv = sub.add_parser("serve", help="local web app on http://127.0.0.1:8765")
+    sv.add_argument("--port", type=int, default=8765)
+
     c = sub.add_parser("confirm", help="cross-check two takes of the same members (second-take alias guard)")
     c.add_argument("run_a")
     c.add_argument("run_b")
@@ -55,6 +58,10 @@ def main(argv: list[str] | None = None) -> None:
         rep = json.loads((Path(args.run_dir) / "report.json").read_text())
         md = inspect(rep, ctx, args.run_dir, mode=args.mode, inspector=args.inspector, verifier=args.verifier)
         print(md.read_text())
+        return
+    if args.cmd == "serve":
+        from .server import serve
+        serve(args.port)
         return
     if args.cmd == "confirm":
         from .takes import confirm

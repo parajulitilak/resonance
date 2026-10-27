@@ -23,3 +23,18 @@ def test_disagreeing_takes_refused():
 def test_same_rate_is_not_an_alias_check():
     out = confirm(_rep(240, 12.13), _rep(240, 12.13))
     assert out["members"][0]["ladder"]["status"] == "provisional"
+
+
+def test_approval_is_one_time_and_hash_bound(tmp_path):
+    import json
+    import pytest
+    from resonance.agent import approve
+    (tmp_path / "report.json").write_text(json.dumps({"timing": {"frames": 1, "fps": 240.0, "source": "t"},
+                                                      "members": []}))
+    (tmp_path / "agent.json").write_text(json.dumps({"actions": {"flags": [], "reshoots": [], "report": None},
+                                                     "violations": [], "verdicts": [], "mode": "bench"}))
+    approve(tmp_path, "A")
+    rec = json.loads((tmp_path / "approval.json").read_text())
+    assert rec["by"] == "A" and len(rec["sha256"]) == 64
+    with pytest.raises(RuntimeError):
+        approve(tmp_path, "B")
