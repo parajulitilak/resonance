@@ -1,0 +1,27 @@
+[project]
+name = "resonance"
+version = "0.1.0"
+description = "Cable tension and vibration from phone video: SAM 3.1 places the sensors, Muse Spark checks the physics."
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "pillow>=10",
+]
+
+[project.scripts]
+resonance = "resonance.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/resonance"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+markers = ["slow: renders and analyses a synthetic video (~30 s)"]
