@@ -41,6 +41,30 @@ def analyze_tracking(tr: Tracking) -> dict:
         w = tr.weights[m.name] if tr.weights else None
         sp = spectrum(tr.t, tr.disp[m.name], weights=w, pad=8 if m.kind == "patch" else 4)
         pk_all = peaks(sp, f_min=0.1 if m.kind == "patch" else 0.3, min_snr=5.0 if m.kind == "patch" else 8.0)
+        if m.kind == "patch" and m.length_m and m.mass_per_m:
+            # a tracked point on a string of known length and mass: full ladder check and tension physics,
+            # but no mode-shape check (one point can't show nodes)
+            pk = [p for p in pk_all if not any(abs(p.f - f) <= 0.01 * f for f in shake_f)]
+            prior = m.expected_f0()
+            fit = fit_harmonics(pk, sp.fs, f0_range=prior, duration=duration)
+            entry = {"name": m.name, "kind": "patch", "box": list(m.box), "direction": list(m.direction),
+                     "quality": tr.quality[m.name], "prior_f0_hz": list(prior) if prior else None,
+                     "peaks": [asdict(p) for p in pk],
+                     "ladder": {"ok": fit.ok, "status": fit.status, "reasons": fit.reasons, "f0_hz": fit.f0,
+                                "f0_sigma_hz": fit.f0_sigma, "b": fit.b, "rel_residual": fit.rel_residual,
+                                "explained": fit.explained,
+                                "modes": [{"n": n, "f_hz": f, "snr": s_} for n, f, s_ in fit.modes]},
+                     "mode_nodes": {}, "notes": ["single tracked point: mode-shape check not available"]}
+            if fit.status in ("verified", "provisional"):
+                est = tension(fit.f0, fit.f0_sigma, fit.b, m.length_m, m.mass_per_m)
+                entry["tension"] = {"value_n": est.tension_n, "sigma_n": est.sigma_n, "xi": est.xi,
+                                    "clamped_n": est.clamped_n, "reliable": est.reliable and fit.ok,
+                                    "provisional": fit.status == "provisional", "note": est.note,
+                                    "inputs": {"length_m": m.length_m, "mass_per_m": m.mass_per_m}}
+            else:
+                entry["tension"] = {"value_n": None, "note": "refused: " + "; ".join(fit.reasons)}
+            report["members"].append(entry)
+            continue
         if m.kind == "patch":
             pk = [p for p in local_peaks(sp, f_min=0.1) if not any(abs(p.f - f) <= 0.01 * f for f in shake_f)]
             dom = max(pk, key=lambda p: p.power) if pk else None
