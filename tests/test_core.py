@@ -86,3 +86,15 @@ def test_bench_end_to_end(tmp_path):
 def test_two_clean_harmonics_are_provisional_not_verified():
     fit = fit_harmonics(ladder_peaks(8.4, ns=(1, 2)), fs=240)
     assert not fit.ok and fit.provisional and fit.status == "provisional"
+
+
+def test_local_peaks_find_low_frequency_sway_under_drift():
+    from resonance.spectrum import local_peaks, spectrum
+    fs, n = 30.0, 1800
+    t = np.arange(n) / fs
+    rng = np.random.default_rng(1)
+    drift = np.cumsum(rng.normal(0, 0.05, n))            # slow wander, like a camera on a tree
+    x = (drift + 0.8 * np.sin(2 * np.pi * 0.234 * t) + rng.normal(0, 0.2, n))[:, None]
+    pk = local_peaks(spectrum(t, x, pad=8), f_min=0.1)
+    top = max(pk, key=lambda p: p.power)
+    assert top.f == pytest.approx(0.234, abs=0.01)

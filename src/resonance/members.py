@@ -23,6 +23,9 @@ class Member:
     mass_per_m: float | None = None  # kg per metre
     f0_range: tuple[float, float] | None = None       # coarse prior on the fundamental, Hz
     tension_range: tuple[float, float] | None = None  # coarse prior on tension, N (needs L and m)
+    kind: str = "cable"      # "cable": thin line, tension physics; "patch": textured region, frequencies only
+    box: tuple[int, int, int, int] | None = None      # patch members: x0, y0, x1, y1
+    direction: tuple[float, float] = (0.0, 1.0)       # patch members: measured motion direction (default vertical)
     meta: dict = field(default_factory=dict)
 
     def expected_f0(self) -> tuple[float, float] | None:
@@ -42,6 +45,9 @@ class Member:
 
     @property
     def normal(self) -> np.ndarray:
+        if self.kind == "patch":
+            d = np.asarray(self.direction, float)
+            return d / np.linalg.norm(d)
         ux, uy = self.axis
         return np.array([-uy, ux])
 
@@ -78,6 +84,13 @@ def from_mask(name: str, mask: np.ndarray, trim: float = 0.03, **kw) -> Member:
     if p0[1] > p1[1]:  # keep p0 on top for vertical members
         p0, p1 = p1, p0
     return Member(name, tuple(p0), tuple(p1), half_width=max(6.0, 2.5 * thickness), **kw)
+
+
+def patch(name: str, box: tuple[int, int, int, int], direction=(0.0, 1.0), **kw) -> Member:
+    """A textured region (deck, tower, marker) tracked as a whole by phase correlation."""
+    x0, y0, x1, y1 = box
+    cx = 0.5 * (x0 + x1)
+    return Member(name, (cx, y0), (cx, y1), kind="patch", box=tuple(int(v) for v in box), direction=direction, **kw)
 
 
 def parse_member(spec: str) -> Member:

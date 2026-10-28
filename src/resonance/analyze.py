@@ -11,7 +11,7 @@ import numpy as np
 from .displacement import Tracking, track
 from .members import Member
 from .physics import tension
-from .spectrum import Peak, count_dips, fit_harmonics, mode_magnitude, peaks, spectrum
+from .spectrum import Peak, count_dips, fit_harmonics, local_peaks, mode_magnitude, peaks, spectrum
 
 
 def _shake_peaks(tr: Tracking) -> list[float]:
@@ -36,11 +36,24 @@ def analyze_tracking(tr: Tracking) -> dict:
         "members": [],
     }
     duration = float(tr.t[-1] - tr.t[0])
-    all_peaks: dict[str, list[Peak]] = {}
+    all_peaks: dict[str, list[Peak]] = {}  # cable members only
     for m in tr.members:
         w = tr.weights[m.name] if tr.weights else None
-        sp = spectrum(tr.t, tr.disp[m.name], weights=w)
-        pk_all = peaks(sp)
+        sp = spectrum(tr.t, tr.disp[m.name], weights=w, pad=8 if m.kind == "patch" else 4)
+        pk_all = peaks(sp, f_min=0.1 if m.kind == "patch" else 0.3, min_snr=5.0 if m.kind == "patch" else 8.0)
+        if m.kind == "patch":
+            pk = [p for p in local_peaks(sp, f_min=0.1) if not any(abs(p.f - f) <= 0.01 * f for f in shake_f)]
+            dom = max(pk, key=lambda p: p.power) if pk else None
+            report["members"].append({
+                "name": m.name, "kind": "patch", "box": list(m.box), "direction": list(m.direction),
+                "quality": tr.quality[m.name], "peaks": [asdict(p) for p in pk],
+                "ladder": {"ok": False, "status": "frequency" if dom else "refused",
+                           "reasons": [] if dom else ["no clear vibration peak in the patch motion"],
+                           "f0_hz": dom.f if dom else float("nan"),
+                           "f0_sigma_hz": (0.05 / duration) if dom else float("nan"), "b": 0.0,
+                           "rel_residual": float("nan"), "explained": 0.0, "modes": []},
+                "mode_nodes": {}, "tension": {"value_n": None, "note": "patch: frequencies only, no tension physics"}})
+            continue
         # drop peaks the camera made (they appear in the anchor's own motion)
         pk = [p for p in pk_all if not any(abs(p.f - f) <= max(0.01 * f, 2 * (sp.f[1] - sp.f[0])) for f in shake_f)]
         all_peaks[m.name] = pk

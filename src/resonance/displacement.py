@@ -87,6 +87,11 @@ def track(path: str, members: list[Member], anchor: tuple[int, int, int, int] | 
           max_frames: int | None = None) -> Tracking:
     """Track every member through the video. `anchor` is a static box (x0, y0, x1, y1)."""
     tb = frame_times(path, capture_fps)
+    patches = [m for m in members if m.kind == "patch"]
+    members_all = members
+    members = [m for m in members if m.kind != "patch"]
+    pref: dict[str, tuple] = {}
+    pshift: dict[str, list] = {m.name: [] for m in patches}
     grids = {m.name: m.sample_grid(n_stations) for m in members}
     polarity: dict[str, np.ndarray] = {}
     warm: dict[str, list] = {m.name: [] for m in members}
@@ -98,6 +103,13 @@ def track(path: str, members: list[Member], anchor: tuple[int, int, int, int] | 
         if max_frames and i >= max_frames:
             break
         f = frame.astype(np.float32)
+        for m in patches:
+            x0, y0, x1, y1 = m.box
+            crop = f[y0:y1, x0:x1]
+            if m.name not in pref:
+                w_ = _hann2d(*crop.shape)
+                pref[m.name] = (np.fft.fft2((crop - crop.mean()) * w_), w_)
+            pshift[m.name].append(phase_shift(pref[m.name][0], crop, pref[m.name][1]))
         if anchor:
             x0, y0, x1, y1 = anchor
             crop = f[y0:y1, x0:x1]
@@ -137,6 +149,14 @@ def track(path: str, members: list[Member], anchor: tuple[int, int, int, int] | 
             d = d - (sh @ m.normal)[:, None]
         disp[m.name] = d
     quality, weights = {}, {}
+    for m in patches:
+        d2 = np.array(pshift[m.name])
+        if sh is not None:
+            d2 = d2 - sh[: d2.shape[0]]
+        disp[m.name] = (d2 @ m.normal)[:, None]
+        weights[m.name] = np.ones(1)
+        quality[m.name] = {"contrast": float("nan"), "hf_motion_px": float(np.std(np.diff(disp[m.name][:, 0], 2)) / np.sqrt(6)),
+                           "stations_used": 1, "stations": 1, "kind": "patch"}
     for m in members:
         d = disp[m.name]
         cs = np.median(np.array(contrast[m.name]), 0)        # per-station contrast
@@ -147,5 +167,5 @@ def track(path: str, members: list[Member], anchor: tuple[int, int, int, int] | 
         hf = float(np.std(np.diff(d, 2, axis=0)) / np.sqrt(6)) if d.shape[0] > 3 else float("nan")
         quality[m.name] = {"contrast": float(np.median(cs)), "hf_motion_px": hf,
                            "stations_used": int((w > 0).sum()), "stations": int(w.size)}
-    stations = next(iter(grids.values()))[2]
-    return Tracking(tb, members, stations, disp, quality, sh, weights)
+    stations = next(iter(grids.values()))[2] if grids else np.array([0.5])
+    return Tracking(tb, members_all, stations, disp, quality, sh, weights)

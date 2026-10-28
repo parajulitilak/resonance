@@ -104,6 +104,33 @@ def peaks(sp: Spectrum, f_min: float = 0.3, min_snr: float = 8.0, max_peaks: int
     return sorted(out[:max_peaks], key=lambda p: p.f)
 
 
+def local_peaks(sp: Spectrum, f_min: float = 0.1, f_max: float | None = None, min_ratio: float = 4.0,
+                max_peaks: int = 12) -> list[Peak]:
+    """Peaks judged against their own neighbourhood (power vs the median over [f/2, 2f], excluding the
+    peak itself). Unlike the global floor this is fair to low-frequency sway, where drift inflates the floor."""
+    f_max = f_max or 0.9 * sp.fs / 2
+    p = sp.power
+    out = []
+    for i in range(1, len(p) - 1):
+        f = sp.f[i]
+        if f < f_min or f > f_max or not (p[i] >= p[i - 1] and p[i] >= p[i + 1]):
+            continue
+        nb = (sp.f >= f / 2) & (sp.f <= 2 * f) & (np.abs(sp.f - f) > 0.1 * f)
+        if nb.sum() < 8:
+            continue
+        ratio = p[i] / (np.median(p[nb]) + 1e-20)
+        if ratio >= min_ratio:
+            out.append(Peak(float(f), float(p[i]), float(ratio)))
+    out.sort(key=lambda q: -q.power)
+    keep: list[Peak] = []
+    for q in out:  # one peak per neighbourhood
+        if all(abs(q.f - k.f) > 0.05 * k.f for k in keep):
+            keep.append(q)
+        if len(keep) >= max_peaks:
+            break
+    return sorted(keep, key=lambda q: q.f)
+
+
 def _ladder(n: np.ndarray, f0: float, b: float) -> np.ndarray:
     return n * f0 * np.sqrt(1 + b * n ** 2)
 
