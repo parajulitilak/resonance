@@ -38,6 +38,12 @@ def main(argv: list[str] | None = None) -> None:
     i.add_argument("--mode", choices=["bench", "field"], default="bench")
     i.add_argument("--inspector", choices=["baseten", "meta"], default="baseten")
     i.add_argument("--verifier", choices=["baseten", "meta"], default="baseten")
+    i.add_argument("--baseline", help="run dir of an earlier take of the same members (change detection)")
+
+    df = sub.add_parser("diff", help="re-check against a baseline take: which members changed?")
+    df.add_argument("baseline_run")
+    df.add_argument("recheck_run")
+    df.add_argument("--out")
 
     sv = sub.add_parser("serve", help="local web app on http://127.0.0.1:8765")
     sv.add_argument("--port", type=int, default=8765)
@@ -56,8 +62,21 @@ def main(argv: list[str] | None = None) -> None:
         from .agent import inspect
         ctx = Path(args.context[1:]).read_text() if args.context.startswith("@") else args.context
         rep = json.loads((Path(args.run_dir) / "report.json").read_text())
-        md = inspect(rep, ctx, args.run_dir, mode=args.mode, inspector=args.inspector, verifier=args.verifier)
+        base = json.loads((Path(args.baseline) / "report.json").read_text()) if args.baseline else None
+        md = inspect(rep, ctx, args.run_dir, mode=args.mode, inspector=args.inspector, verifier=args.verifier,
+                     baseline=base)
         print(md.read_text())
+        return
+    if args.cmd == "diff":
+        from .fingerprint import describe, diff
+        a = json.loads((Path(args.baseline_run) / "report.json").read_text())
+        b = json.loads((Path(args.recheck_run) / "report.json").read_text())
+        res = diff(a, b)
+        for r in res["members"]:
+            print(("⚠ " if r["status"] == "changed" else "  ") + describe(r))
+        if args.out:
+            Path(args.out).mkdir(parents=True, exist_ok=True)
+            (Path(args.out) / "diff.json").write_text(json.dumps(res, indent=2, default=float))
         return
     if args.cmd == "serve":
         from .server import serve
