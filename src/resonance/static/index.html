@@ -5,27 +5,28 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Resonance · cable tension from a phone video</title>
 <style>
-  :root { --bg:#0e1116; --panel:#181c24; --line:#2a303c; --ink:#e8ecf2; --dim:#8c96a5; --teal:#26c4aa;
-          --amber:#ffb02e; --red:#f05454; --blue:#82b4ff; }
+  :root { --bg:#0e1116; --panel:#181c24; --line:#2a303c; --ink:#e8ecf2; --dim:#8c96a5; --data:#c9d1dc;
+          --model:#56b4e9; --ok:#26c4aa; --prov:#e69f00; --bad:#ff6a3d; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 -apple-system, "Helvetica Neue", sans-serif; }
-  header { padding:28px 40px 8px; }
-  h1 { margin:0; font-size:30px; letter-spacing:.5px; }
-  header p { margin:4px 0 0; color:var(--dim); }
-  main { display:grid; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); gap:24px; padding:20px 40px 60px; }
-  section { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px 22px; }
-  section h2 { margin:0 0 12px; font-size:16px; letter-spacing:.3px; color:var(--dim); text-transform:uppercase; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 -apple-system, "Helvetica Neue", sans-serif;
+         font-variant-numeric: tabular-nums; }
+  header { padding:24px 40px 4px; display:flex; align-items:baseline; gap:18px; }
+  h1 { margin:0; font-size:28px; letter-spacing:.6px; }
+  header p { margin:0; color:var(--dim); }
+  main { display:grid; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); gap:22px; padding:18px 40px 60px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px 20px; }
+  section h2 { margin:0 0 12px; font-size:13px; letter-spacing:.8px; color:var(--dim); text-transform:uppercase; }
   .step { display:inline-block; width:22px; height:22px; border-radius:50%; background:var(--line); color:var(--ink);
-          text-align:center; font-size:13px; line-height:22px; margin-right:8px; }
-  button { background:var(--teal); color:#062; border:0; border-radius:9px; padding:9px 16px; font-weight:600;
+          text-align:center; font-size:12px; line-height:22px; margin-right:8px; }
+  button { background:var(--ok); color:#04201b; border:0; border-radius:9px; padding:9px 16px; font-weight:650;
            cursor:pointer; font-size:14px; }
-  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); font-weight:500; }
   button:disabled { opacity:.4; cursor:default; }
   input, select, textarea { background:#0f131a; color:var(--ink); border:1px solid var(--line); border-radius:8px;
            padding:7px 9px; font:inherit; }
-  textarea { width:100%; min-height:110px; }
-  .drop { border:2px dashed var(--line); border-radius:12px; padding:28px; text-align:center; color:var(--dim); }
-  .drop.over { border-color:var(--teal); color:var(--ink); }
+  textarea { width:100%; min-height:96px; }
+  .drop { border:2px dashed var(--line); border-radius:12px; padding:26px; text-align:center; color:var(--dim); }
+  .drop.over { border-color:var(--ok); color:var(--ink); }
   #stage { position:relative; margin-top:12px; }
   #frame { width:100%; display:block; border-radius:10px; }
   #overlay { position:absolute; inset:0; width:100%; height:100%; cursor:crosshair; }
@@ -33,31 +34,47 @@
   th, td { text-align:left; padding:7px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
   th { color:var(--dim); font-weight:500; }
   td input { width:74px; padding:4px 6px; }
-  .chip { display:inline-block; padding:2px 9px; border-radius:20px; font-size:12px; font-weight:700; letter-spacing:.4px; }
-  .verified { background:rgba(38,196,170,.16); color:var(--teal); }
-  .provisional { background:rgba(255,176,46,.16); color:var(--amber); }
-  .refused { background:rgba(240,84,84,.16); color:var(--red); }
+  .chip { display:inline-block; padding:3px 11px; border-radius:20px; font-size:12px; font-weight:750; letter-spacing:.5px; }
+  .verified { background:rgba(38,196,170,.16); color:var(--ok); }
+  .provisional { background:rgba(230,159,0,.18); color:var(--prov); }
+  .refused { background:rgba(255,106,61,.16); color:var(--bad); }
+  .frequency { background:rgba(86,180,233,.16); color:var(--model); }
   .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   .muted { color:var(--dim); font-size:13px; }
   video { width:100%; border-radius:10px; background:#000; }
-  #inspection { font-size:14px; }
-  #inspection table { font-size:13px; }
   .stagebar { height:4px; background:var(--line); border-radius:4px; overflow:hidden; margin:10px 0; }
-  .stagebar div { height:100%; width:0; background:var(--teal); transition:width .4s; }
+  .stagebar div { height:100%; width:0; background:var(--ok); transition:width .4s; }
   .full { grid-column: 1 / -1; }
-  .approved { color:var(--teal); font-weight:700; }
+  .big { font-size:22px; font-weight:700; }
+  .card { border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin:8px 0; background:#141820; }
+  .card.bad { border-color:rgba(255,106,61,.55); background:rgba(255,106,61,.06); }
+  .card.warn { border-color:rgba(230,159,0,.55); background:rgba(230,159,0,.06); }
+  .card.ok { border-color:rgba(38,196,170,.45); }
+  .tool { font-family: "JetBrains Mono", Menlo, monospace; font-size:12.5px; color:var(--model); padding:3px 0; }
+  .tool span { color:var(--dim); }
+  .badge { font-size:12px; font-weight:650; padding:2px 8px; border-radius:6px; margin-left:6px; }
+  .agree { background:rgba(38,196,170,.16); color:var(--ok); }
+  .dispute { background:rgba(255,106,61,.16); color:var(--bad); }
+  .cols { display:grid; grid-template-columns: minmax(0,1fr) minmax(0,1.6fr); gap:20px; }
+  .bar { position:relative; height:6px; background:var(--line); border-radius:4px; margin-top:6px; width:160px; }
+  .bar i { position:absolute; top:0; bottom:0; background:var(--data); border-radius:4px; opacity:.8; }
+  .hash { font-family: Menlo, monospace; font-size:12px; color:var(--dim); }
+  .ev { font-family: Menlo, monospace; font-size:11.5px; color:var(--model); border:1px solid rgba(86,180,233,.35);
+        border-radius:5px; padding:1px 6px; }
+  .delta { display:inline-block; margin-left:8px; font-weight:700; font-size:13px; }
+  a { color:var(--model); }
 </style>
 </head>
 <body>
 <header>
   <h1>RESONANCE</h1>
-  <p>Cable tension and vibration from a phone video. SAM 3.1 places the sensors, physics checks itself, Muse Spark writes the report, an engineer signs it.</p>
+  <p>Cable tension from a phone video · SAM 3.1 places the sensors · physics checks itself · an engineer signs</p>
 </header>
 <main>
-  <section>
+  <section id="clipsec">
     <h2><span class="step">1</span>Clip</h2>
-    <div id="drop" class="drop">Drop a slow-motion clip here (240 fps original, not a forwarded copy) or
-      <label style="color:var(--teal);cursor:pointer">choose a file<input id="file" type="file" accept="video/*" hidden></label></div>
+    <div id="drop" class="drop">Drop the original slow-motion clip here (240 fps, not a forwarded copy) or
+      <label style="color:var(--ok);cursor:pointer">choose a file<input id="file" type="file" accept="video/*" hidden></label></div>
     <div id="clipinfo" class="muted" style="margin-top:8px"></div>
     <div id="stage" hidden>
       <img id="frame" alt="first frame">
@@ -65,15 +82,15 @@
     </div>
   </section>
 
-  <section>
+  <section id="cablesec">
     <h2><span class="step">2</span>Cables</h2>
     <div class="row" style="margin-bottom:10px">
-      <button id="detect" class="ghost" disabled>Auto-detect with SAM 3.1</button>
-      <input id="concept" value="rope" style="width:140px" title="noun phrase for SAM 3.1">
+      <button id="detect" class="ghost" disabled>Find cables with SAM 3.1</button>
+      <input id="concept" value="rope" style="width:130px" title="noun phrase for SAM 3.1">
       <button id="anchorBtn" class="ghost" disabled>Mark static anchor</button>
     </div>
-    <p class="muted">Click the two ends of each cable on the frame (top, then bottom). Give its free length,
-      mass per metre and a rough plausible tension range (the alias guard).</p>
+    <p class="muted">Or click the two ends of each cable on the frame. Length, mass per metre and a rough tension range
+      unlock tension; without them you still get frequencies and change detection.</p>
     <table id="members"><thead><tr><th>Cable</th><th>L (m)</th><th>m (kg/m)</th><th>T range (N)</th><th></th></tr></thead><tbody></tbody></table>
     <div class="row" style="margin-top:14px">
       <button id="analyze" disabled>Measure</button>
@@ -85,41 +102,47 @@
 
   <section class="full" id="results" hidden>
     <h2><span class="step">3</span>Measurement</h2>
-    <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:20px">
+    <div class="cols" style="grid-template-columns:minmax(0,1.25fr) minmax(0,1fr)">
       <video id="hero" controls playsinline></video>
       <div>
-        <table id="restable"><thead><tr><th>Cable</th><th>Status</th><th>f0</th><th>Modes</th><th>Tension</th></tr></thead><tbody></tbody></table>
-        <div id="reasons" class="muted" style="margin-top:10px"></div>
+        <div id="cards"></div>
+        <div class="row" style="margin-top:12px">
+          <span class="muted">Re-check against an earlier take:</span>
+          <select id="baseline"><option value="">— baseline —</option></select>
+          <button id="compare" class="ghost">Compare</button>
+        </div>
+        <div id="changes"></div>
       </div>
     </div>
   </section>
 
   <section class="full" id="agentsec" hidden>
-    <h2><span class="step">4</span>Inspection agent · independent verifier · engineer approval</h2>
+    <h2><span class="step">4</span>Inspection agent · independent verifier · engineer sign-off</h2>
     <div class="row" style="margin-bottom:8px">
-      <select id="mode"><option value="bench">bench</option><option value="field">field</option></select>
-      <button id="inspect">Run inspection (Muse Spark)</button>
+      <select id="mode"><option value="bench">bench</option><option value="field">field (screening only)</option></select>
+      <button id="inspect">Run inspection</button>
       <span id="istatus" class="muted"></span>
     </div>
     <textarea id="context" placeholder="Field notes: what was filmed, rope type and weighed mass per metre, lengths, reference masses or design values…"></textarea>
-    <div id="inspection" style="margin-top:14px"></div>
-    <div class="row" id="approveRow" hidden style="margin-top:14px">
-      <input id="approver" placeholder="Engineer name">
-      <button id="approve">Approve report</button>
-      <span id="astatus" class="muted"></span>
+    <div class="cols" style="margin-top:14px">
+      <div><div class="muted" style="margin-bottom:6px">Agent tool calls (Muse Spark)</div><div id="timeline"></div></div>
+      <div><div class="muted" style="margin-bottom:6px">Report · each claim checked by Muse Spark Open</div><div id="claims"></div></div>
     </div>
+    <div id="signcard"></div>
   </section>
 </main>
 <script>
 const $ = s => document.querySelector(s);
-let video = null, vw = 0, vh = 0, members = [], pending = null, anchor = null, anchorMode = false, job = null;
-const COLORS = {verified:'#26c4aa', provisional:'#ffb02e', refused:'#f05454', none:'#82b4ff'};
+const esc = t => String(t ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+let video = null, vw = 0, vh = 0, members = [], pending = null, anchor = null, anchorMode = false, job = null, report = null;
+const COLORS = {verified:'#26c4aa', provisional:'#e69f00', refused:'#ff6a3d', frequency:'#56b4e9', none:'#c9d1dc'};
 
 function draw(status = {}) {
   const c = $('#overlay'), img = $('#frame');
+  if (!img.clientWidth) return;
   c.width = img.clientWidth; c.height = img.clientHeight;
   const k = c.width / vw, g = c.getContext('2d');
-  g.clearRect(0, 0, c.width, c.height); g.lineWidth = 3; g.font = '14px -apple-system';
+  g.clearRect(0, 0, c.width, c.height); g.lineWidth = 3; g.font = '600 14px -apple-system';
   members.forEach(m => {
     g.strokeStyle = COLORS[status[m.name] || 'none'];
     g.beginPath(); g.moveTo(m.p0[0]*k, m.p0[1]*k); g.lineTo(m.p1[0]*k, m.p1[1]*k); g.stroke();
@@ -134,7 +157,7 @@ function renderMembers() {
   const tb = $('#members tbody'); tb.innerHTML = '';
   members.forEach((m, i) => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td><input value="${m.name}" data-k="name"></td>
+    tr.innerHTML = `<td><input value="${esc(m.name)}" data-k="name"></td>
       <td><input value="${m.length_m ?? ''}" data-k="length_m" placeholder="1.80"></td>
       <td><input value="${m.mass_per_m ?? ''}" data-k="mass_per_m" placeholder="0.022"></td>
       <td><input value="${m.tension_range ? m.tension_range.join('-') : ''}" data-k="tension_range" placeholder="5-300"></td>
@@ -157,12 +180,11 @@ async function upload(file) {
   const r = await fetch('/api/upload?name=' + encodeURIComponent(file.name), {method:'POST', body:file});
   const j = await r.json();
   video = j.video; vw = j.width; vh = j.height; members = []; anchor = null;
-  $('#clipinfo').textContent = `${file.name} · ${j.width}×${j.height} · container says ${j.fps.toFixed(1)} fps`;
+  $('#clipinfo').textContent = `${file.name} · ${j.width}×${j.height} · container says ${j.fps.toFixed(1)} fps (true timing is measured per frame)`;
   $('#frame').src = '/api/frame?video=' + video; $('#stage').hidden = false;
   $('#frame').onload = () => draw();
   $('#detect').disabled = false; $('#anchorBtn').disabled = false; renderMembers();
 }
-
 $('#file').onchange = e => e.target.files[0] && upload(e.target.files[0]);
 const drop = $('#drop');
 drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
@@ -170,11 +192,11 @@ drop.ondragleave = () => drop.classList.remove('over');
 drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); e.dataTransfer.files[0] && upload(e.dataTransfer.files[0]); };
 
 $('#overlay').onclick = e => {
-  const c = $('#overlay'), rect = c.getBoundingClientRect(), k = vw / rect.width;
+  const rect = $('#overlay').getBoundingClientRect(), k = vw / rect.width;
   const p = [Math.round((e.clientX - rect.left) * k), Math.round((e.clientY - rect.top) * k)];
   if (anchorMode) {
     anchor = anchor && anchor.length === 2 ? [Math.min(anchor[0],p[0]), Math.min(anchor[1],p[1]), Math.max(anchor[0],p[0]), Math.max(anchor[1],p[1])] : p;
-    if (anchor.length === 4) { anchorMode = false; $('#anchorInfo').textContent = 'Anchor set: shake will be removed.'; }
+    if (anchor.length === 4) { anchorMode = false; $('#anchorInfo').textContent = 'Anchor set: camera shake will be removed.'; }
     draw(); return;
   }
   if (!pending) { pending = p; draw(); return; }
@@ -185,8 +207,7 @@ $('#anchorBtn').onclick = () => { anchorMode = true; anchor = null; $('#anchorIn
 
 $('#detect').onclick = async () => {
   $('#status').textContent = 'Asking SAM 3.1…';
-  const r = await fetch('/api/detect', {method:'POST', body: JSON.stringify({video, concept: $('#concept').value})});
-  const j = await r.json();
+  const j = await (await fetch('/api/detect', {method:'POST', body: JSON.stringify({video, concept: $('#concept').value})})).json();
   if (j.error) { $('#status').textContent = 'SAM 3.1: ' + j.error; return; }
   members = j.members.map(m => ({...m, length_m:null, mass_per_m:null, tension_range:null}));
   $('#status').textContent = `SAM 3.1 found ${members.length} × "${$('#concept').value}".`;
@@ -197,75 +218,135 @@ const STAGES = {queued:5, tracking:30, analysing:60, rendering:80, done:100, err
 $('#analyze').onclick = async () => {
   $('#analyze').disabled = true; $('#results').hidden = true; $('#agentsec').hidden = true;
   const r = await fetch('/api/analyze', {method:'POST', body: JSON.stringify({video, members, anchor: anchor && anchor.length === 4 ? anchor : null})});
-  job = (await r.json()).job; poll();
+  job = (await r.json()).job; report = null; history.replaceState(null, '', '?run=' + job); poll();
 };
 
 async function poll() {
   const j = await (await fetch('/api/jobs/' + job)).json();
   $('#bar').style.width = (STAGES[j.stage] || 10) + '%';
   $('#status').textContent = j.stage === 'error' ? 'Error: ' + j.error : 'Stage: ' + j.stage;
-  if (j.report && !$('#restable tbody').dataset.job) showReport(j.report);
-  if (j.stage === 'done') { $('#hero').src = j.hero; $('#analyze').disabled = false; return; }
+  if (j.report && !report) showReport(j.report);
+  if (j.stage === 'done') { if (j.hero) $('#hero').src = j.hero; $('#analyze').disabled = false; showAgent(j); return; }
   if (j.stage === 'error') { $('#analyze').disabled = false; return; }
   setTimeout(poll, 800);
 }
 
-function showReport(rep) {
-  const tb = $('#restable tbody'); tb.innerHTML = ''; tb.dataset.job = job;
-  const st = {}; const reasons = [];
-  rep.members.forEach(m => {
-    const L = m.ladder, T = m.tension || {}; st[m.name] = L.status;
-    const ten = T.value_n != null ? `${T.value_n.toFixed(1)} ± ${T.sigma_n.toFixed(1)} N` : '—';
-    tb.innerHTML += `<tr><td>${m.name}</td><td><span class="chip ${L.status}">${L.status.toUpperCase()}</span></td>
-      <td>${L.status !== 'refused' ? L.f0_hz.toFixed(3) + ' Hz' : '—'}</td><td>${L.modes.map(x => x.n).join(',') || '—'}</td><td>${ten}</td></tr>`;
-    if (L.reasons.length) reasons.push(`<b>${m.name}</b>: ${L.reasons.join('; ')}`);
-  });
-  $('#reasons').innerHTML = reasons.join('<br>');
-  $('#results').hidden = false; $('#agentsec').hidden = false; draw(st);
+function tensionBlock(m) {
+  const T = m.tension || {}, L = m.ladder;
+  if (T.value_n == null) return `<div class="big">${L.status === 'refused' ? '—' : L.f0_hz.toFixed(3) + ' Hz'}</div>`;
+  const rel = Math.min(T.sigma_n / T.value_n, 0.5), w = 160;
+  return `<div class="big">${T.value_n.toFixed(1)} N</div>
+    <div class="bar"><i style="left:${(0.5 - rel) * w}px; width:${2 * rel * w}px"></i></div>
+    <div class="muted">± ${T.sigma_n.toFixed(1)} N · f0 ${L.f0_hz.toFixed(3)} Hz · ${L.modes.length} rungs</div>`;
 }
 
-function md(s) {  // tiny markdown → html for the inspection report
-  const esc = t => t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
-  const inl = t => esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/`(.+?)`/g,'<code>$1</code>');
-  const out = []; let table = null;
-  for (const line of s.split('\n')) {
-    if (line.startsWith('|')) {
-      const cells = line.split('|').slice(1, -1).map(c => c.trim());
-      if (cells.every(c => /^-+$/.test(c))) continue;
-      if (!table) { table = []; out.push('<table>'); }
-      out.push('<tr>' + cells.map(c => `<td>${inl(c)}</td>`).join('') + '</tr>'); continue;
-    }
-    if (table) { out.push('</table>'); table = null; }
-    if (line.startsWith('# ')) out.push(`<h3>${inl(line.slice(2))}</h3>`);
-    else if (line.startsWith('## ')) out.push(`<h4 style="color:var(--dim)">${inl(line.slice(3))}</h4>`);
-    else if (line.startsWith('- ')) out.push(`<div>• ${inl(line.slice(2))}</div>`);
-    else if (line.trim()) out.push(`<p>${inl(line)}</p>`);
+function showReport(rep) {
+  report = rep;
+  const st = {}; const out = [];
+  rep.members.forEach(m => {
+    const L = m.ladder; st[m.name] = L.status;
+    const cls = L.status === 'refused' ? 'bad' : L.status === 'provisional' ? 'warn' : 'ok';
+    out.push(`<div class="card ${cls}" data-member="${esc(m.name)}"><div class="row" style="justify-content:space-between">
+      <b>${esc(m.name)}<span class="delta"></span></b><span class="chip ${L.status}">${L.status.toUpperCase()}</span></div>
+      ${tensionBlock(m)}
+      ${L.reasons.length ? `<div class="muted" style="margin-top:6px">${L.reasons.map(esc).join('<br>')}</div>` : ''}
+      ${L.status === 'refused' ? `<div style="margin-top:8px"><b>Re-shoot:</b> original 240 fps file, phone on a stand 1–1.5 m away,
+        perpendicular to the cable, pluck once, film 5 s.</div>` : ''}</div>`);
+  });
+  $('#cards').innerHTML = out.join('');
+  $('#results').hidden = false; $('#agentsec').hidden = false;
+  if (vw) draw(st);
+  loadRuns();
+}
+
+async function loadRuns() {
+  const j = await (await fetch('/api/runs')).json();
+  $('#baseline').innerHTML = '<option value="">— baseline —</option>' +
+    j.runs.filter(r => r !== job).map(r => `<option>${r}</option>`).join('');
+}
+$('#compare').onclick = async () => {
+  const b = $('#baseline').value; if (!b) return;
+  const j = await (await fetch(`/api/jobs/${job}/diff?baseline=${b}`)).json();
+  $('#changes').innerHTML = j.members.filter(r => r.status === 'changed').map(r => `<div class="card warn">⚠ ${esc(r.text)}</div>`).join('')
+    || '<div class="card ok">No member changed beyond its uncertainty since the baseline.</div>';
+  j.members.forEach(r => {
+    const el = document.querySelector(`[data-member="${CSS.escape(r.name)}"] .delta`);
+    if (!el) return;
+    if (r.status === 'changed') { el.textContent = `${(r.dT_rel * 100).toFixed(1)}% since baseline`; el.style.color = 'var(--prov)'; }
+    else if (r.status === 'unchanged') { el.textContent = 'unchanged'; el.style.color = 'var(--dim)'; }
+  });
+};
+
+function showAgent(j) {
+  const a = j.agent; if (!a) { $('#signcard').innerHTML = ''; return; }
+  const calls = (a.actions.transcript || []).flatMap(t => t.tool_calls || []);
+  $('#timeline').innerHTML = calls.map(c => {
+    let args = ''; try { const o = JSON.parse(c.arguments || '{}'); args = o.name ? JSON.stringify(o.name) : ''; } catch (e) {}
+    return `<div class="tool">${esc(c.name)}(<span>${esc(args)}</span>)</div>`;
+  }).join('') || '<div class="muted">no tool calls recorded</div>';
+  const verd = a.verdicts || [];
+  const rep = a.actions.report || {members: [], summary: ''};
+  const claimHtml = rep.members.map((it, i) => {
+    const v = verd.find(x => x.kind === 'statement' && x.id === i);
+    const badge = v ? (v.verdict === 'agree' ? '<span class="badge agree">Spark Open agrees</span>'
+                                             : `<span class="badge dispute" title="${esc(v.reason)}">disputes → needs engineer</span>`) : '';
+    return `<div class="card"><b>${esc(it.name)}</b> <span class="chip ${it.status === 'refused' ? 'refused' : it.status === 'flagged' ? 'provisional' : 'verified'}">${esc(it.status)}</span>${badge}
+      <div style="margin-top:4px">${esc(it.statement)}</div>
+      ${(it.evidence || []).length ? `<div style="margin-top:6px">${it.evidence.map(e => `<span class="ev">${esc(e)}</span>`).join(' ')}</div>` : ''}</div>`;
+  }).join('');
+  const flags = (a.actions.flags || []).map((f, k) => {
+    const v = verd.find(x => x.kind === 'flag' && x.flag_index === k);
+    return `<div class="card warn">⚑ <b>${esc(f.severity)}</b> · ${esc(f.name)}: ${esc(f.finding)}
+      ${v ? (v.verdict === 'agree' ? '<span class="badge agree">agrees</span>' : '<span class="badge dispute">disputed</span>') : ''}</div>`;
+  }).join('');
+  const reshoots = (a.actions.reshoots || []).map(r => `<div class="card bad"><b>Re-shoot ${esc(r.name)}</b>: ${esc(r.reason)}<br>${esc(r.instructions)}</div>`).join('');
+  const rules = (a.violations || []).map(v => `<div class="muted">Blocked by code: ${esc(v.member)} · ${esc(v.rule)}</div>`).join('');
+  $('#claims').innerHTML = `<p>${esc(rep.summary)}</p>` + claimHtml + flags + reshoots + rules;
+  const ms = (report || j.report).members, cnt = s => ms.filter(m => m.ladder.status === s).length;
+  const n = ms.length, f = (a.actions.flags || []).length;
+  if (j.approved) {
+    $('#signcard').innerHTML = `<div class="card ok" style="margin-top:14px"><b style="color:var(--ok)">Signed by ${esc(j.approved.by)}</b> · ${esc(j.approved.at)}
+      <div class="hash">evidence sha256 ${esc(j.approved.sha256)}</div><div class="muted">Re-running the inspection voids this signature.
+      <a href="/runs/${job}/inspection.md" download>Download report</a></div></div>`;
+  } else {
+    $('#signcard').innerHTML = `<div class="card" style="margin-top:14px"><b>You are signing:</b> ${n} cables · ${cnt('verified')} verified ·
+      ${cnt('provisional')} provisional · ${cnt('refused')} refused · ${f} flag${f === 1 ? '' : 's'} · evidence = report.json + agent.json (hashed on signing)
+      <div class="row" style="margin-top:10px"><input id="approver" placeholder="Engineer name"><button id="approve">Approve and sign</button>
+      <span id="astatus" class="muted"></span></div></div>`;
+    $('#approve').onclick = approve;
   }
-  if (table) out.push('</table>');
-  return out.join('');
 }
 
 $('#inspect').onclick = async () => {
-  $('#inspect').disabled = true; $('#istatus').textContent = 'Inspector and verifier working…';
-  await fetch(`/api/jobs/${job}/inspect`, {method:'POST', body: JSON.stringify({context: $('#context').value, mode: $('#mode').value})});
+  $('#inspect').disabled = true; $('#istatus').textContent = 'Muse Spark is inspecting; Muse Spark Open will verify…';
+  await fetch(`/api/jobs/${job}/inspect`, {method:'POST', body: JSON.stringify({context: $('#context').value,
+    mode: $('#mode').value, baseline: $('#baseline').value || null})});
   const tick = async () => {
     const j = await (await fetch('/api/jobs/' + job)).json();
-    if (j.inspect_stage === 'done') { $('#inspection').innerHTML = md(j.inspection); $('#istatus').textContent = '';
-      $('#approveRow').hidden = false; $('#inspect').disabled = false; return; }
+    if (j.inspect_stage === 'done') { $('#istatus').textContent = ''; $('#inspect').disabled = false; showAgent(j); return; }
     if (j.inspect_stage === 'error') { $('#istatus').textContent = j.inspect_error; $('#inspect').disabled = false; return; }
     setTimeout(tick, 1500);
   };
   tick();
 };
 
-$('#approve').onclick = async () => {
+async function approve() {
   const by = $('#approver').value.trim(); if (!by) return;
   const j = await (await fetch(`/api/jobs/${job}/approve`, {method:'POST', body: JSON.stringify({by})})).json();
   if (j.error) { $('#astatus').textContent = j.error; return; }
-  const k = await (await fetch('/api/jobs/' + job)).json();
-  $('#inspection').innerHTML = md(k.inspection);
-  $('#astatus').innerHTML = `<span class="approved">Approved by ${j.approval.by}</span> · evidence sha256 ${j.approval.sha256.slice(0,12)}…`;
-};
+  showAgent(await (await fetch('/api/jobs/' + job)).json());
+}
+
+// replay a finished run: ?run=<id>
+const params = new URLSearchParams(location.search);
+if (params.get('run')) {
+  job = params.get('run');
+  fetch('/api/jobs/' + job).then(r => r.json()).then(j => {
+    if (j.error) return;
+    $('#clipsec').hidden = true; $('#cablesec').hidden = true;
+    showReport(j.report); if (j.hero) $('#hero').src = j.hero; showAgent(j);
+  });
+}
 window.onresize = () => video && draw();
 </script>
 </body>

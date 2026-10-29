@@ -89,17 +89,38 @@ def _run_job(job_id: str, video: Path, spec: dict) -> None:
         job.update(stage="error", error=f"{type(e).__name__}: {e}", trace=traceback.format_exc()[-2000:])
 
 
-def _run_inspect(job_id: str, context: str, mode: str) -> None:
+def _run_inspect(job_id: str, context: str, mode: str, baseline_id: str | None = None) -> None:
     job = JOBS[job_id]
     try:
         job.update(inspect_stage="running")
         from .agent import inspect
         rep = json.loads((RUNS / job_id / "report.json").read_text())
-        md = inspect(rep, context, RUNS / job_id, mode=mode, log=lambda *_: None)
+        base = _load_run(baseline_id)["report"] if baseline_id and _load_run(baseline_id) else None
+        md = inspect(rep, context, RUNS / job_id, mode=mode, log=lambda *_: None, baseline=base)
         job.update(inspect_stage="done", inspection=md.read_text(),
                    agent=json.loads((RUNS / job_id / "agent.json").read_text()))
     except Exception as e:  # noqa: BLE001
         job.update(inspect_stage="error", inspect_error=f"{type(e).__name__}: {e}")
+
+
+def _load_run(job_id: str) -> dict | None:
+    """A job from memory, or rebuilt from its run folder (so finished runs survive a server restart)."""
+    if job_id in JOBS:
+        return JOBS[job_id]
+    d = RUNS / Path(job_id).name
+    if not (d / "report.json").exists():
+        return None
+    job = {"id": job_id, "stage": "done", "report": json.loads((d / "report.json").read_text())}
+    if (d / "hero.mp4").exists():
+        job["hero"] = f"/runs/{job_id}/hero.mp4"
+    if (d / "agent.json").exists():
+        job["agent"] = json.loads((d / "agent.json").read_text())
+        job["inspect_stage"] = "done"
+        job["inspection"] = (d / "inspection.md").read_text() if (d / "inspection.md").exists() else ""
+    if (d / "approval.json").exists():
+        job["approved"] = json.loads((d / "approval.json").read_text())
+    JOBS[job_id] = job
+    return job
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -122,8 +143,22 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(png)
             return
+        if u.path == "/api/runs":
+            runs = sorted((p.name for p in RUNS.glob("*") if (p / "report.json").exists()), reverse=True)
+            return _json(self, {"runs": runs[:50]})
+        if u.path.startswith("/api/jobs/") and u.path.endswith("/diff"):
+            job_id = u.path.split("/")[3]
+            base_id = q.get("baseline", [""])[0]
+            a, b = _load_run(base_id), _load_run(job_id)
+            if not a or not b:
+                return _json(self, {"error": "unknown run"}, 404)
+            from .fingerprint import describe, diff
+            res = diff(a["report"], b["report"])
+            for r in res["members"]:
+                r["text"] = describe(r)
+            return _json(self, res)
         if u.path.startswith("/api/jobs/"):
-            job = JOBS.get(u.path.rsplit("/", 1)[-1])
+            job = _load_run(u.path.rsplit("/", 1)[-1])
             return _json(self, job or {"error": "unknown job"}, 200 if job else 404)
         if u.path.startswith("/runs/"):
             parts = Path(u.path).parts  # /, runs, id, file
@@ -172,13 +207,15 @@ class Handler(BaseHTTPRequestHandler):
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 502)
         if u.path.startswith("/api/jobs/") and u.path.endswith("/inspect"):
             job_id = u.path.split("/")[3]
-            threading.Thread(target=_run_inspect, args=(job_id, body.get("context", ""), body.get("mode", "bench")),
-                             daemon=True).start()
+            _load_run(job_id)
+            threading.Thread(target=_run_inspect, args=(job_id, body.get("context", ""), body.get("mode", "bench"),
+                                                        body.get("baseline")), daemon=True).start()
             return _json(self, {"ok": True})
         if u.path.startswith("/api/jobs/") and u.path.endswith("/approve"):
             job_id = u.path.split("/")[3]
             try:
                 from .agent import approve
+                _load_run(job_id)
                 md = approve(RUNS / job_id, body["by"])
                 JOBS[job_id]["inspection"] = md.read_text()
                 JOBS[job_id]["approved"] = json.loads((RUNS / job_id / "approval.json").read_text())

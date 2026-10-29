@@ -30,7 +30,8 @@ INSPECTOR_SYSTEM = """You are Resonance's inspection agent. You review vibration
 ropes or bridge hangers taken from a phone video and prepare a report for a human engineer.
 
 Rules:
-1. Use only numbers returned by tools, and cite the field you used (for example `ladder.f0_hz`).
+1. Use only numbers returned by tools. Write statements in plain language for an engineer (no field names \
+inside the sentence); list the fields you used in each member's `evidence` array (for example `ladder.f0_hz`).
 2. `ladder.status` is verified, provisional or refused. Provisional members (only two harmonics, at an \
 exact 2:1 ratio) may be reported, but the statement must contain the word "provisional" and you must also \
 request a re-shoot. Refused members get no frequency or tension claim; request a re-shoot with concrete instructions (frame rate, distance, viewing angle, how to \
@@ -81,7 +82,8 @@ TOOLS = [
             "members": {"type": "array", "items": {"type": "object", "properties": {
                 "name": {"type": "string"},
                 "status": {"type": "string", "enum": ["measured", "refused", "flagged"]},
-                "statement": {"type": "string"}}, "required": ["name", "status", "statement"]}},
+                "statement": {"type": "string"},
+                "evidence": {"type": "array", "items": {"type": "string"}}}, "required": ["name", "status", "statement"]}},
             "next_steps": {"type": "array", "items": {"type": "string"}}},
             "required": ["summary", "members", "next_steps"]}}},
 ]
