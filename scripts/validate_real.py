@@ -1,11 +1,12 @@
 """Resonance on real footage with independent ground truth (licensed clips in the research folder)."""
+import os
 import sys
 
 sys.path.insert(0, "src")
 from resonance.analyze import analyze  # noqa: E402
 from resonance.members import patch  # noqa: E402
 
-F = "/Volumes/Data/PERSONAL/Applications/2026-10 Meta Global AI Developer Hackathon/research/footage"
+F = os.environ.get("RESONANCE_FOOTAGE", "data/footage")  # folder with the downloaded clips
 
 # 1. Cello G string, 7000 fps (Mores & Plath 2018, CC BY 4.0): 6.15 g/m, 0.68 m, wave speed 133 m/s -> T = 108.8 N
 rep = analyze(f"{F}/cello_string_7000fps/Torsion6_crf8.mp4",

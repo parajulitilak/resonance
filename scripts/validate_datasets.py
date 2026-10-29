@@ -1,4 +1,5 @@
 """Resonance on open datasets with independent references (research/datasets, downloaded 2026-10-29)."""
+import os
 import sys
 
 import numpy as np
@@ -7,7 +8,7 @@ sys.path.insert(0, "src")
 from resonance.analyze import analyze  # noqa: E402
 from resonance.members import Member, patch  # noqa: E402
 
-D = "/Volumes/Data/PERSONAL/Applications/2026-10 Meta Global AI Developer Hackathon/research/datasets"
+D = os.environ.get("RESONANCE_DATASETS", "data/datasets")  # folder with the downloaded clips
 
 # 1. FLAMBRG bridge-cable model in a wind tunnel, 30 fps side view (Trush et al., Zenodo 15655246, CC BY 4.0).
 #    References from the accelerometers: free decay 5.07/10.04/15.01 Hz; wind runs 9.55 Hz (5.0 m/s), 9.57 (6.3),

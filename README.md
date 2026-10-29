@@ -39,7 +39,7 @@ Built with Muse Spark Open, Muse Spark and SAM 3.1 (Meta). Screening tool: it do
 | Footbridge, drifting handheld camera, 60 fps (Pexels) | not measurement-grade | **refused**: camera moved 24 px RMS, film from a tripod |
 | Slackline with a walker, 25 fps (Pexels) | mass-on-rope, not a free string | **refused** as a cable (no harmonic ladder); bounce at ~1.0 Hz |
 
-Reproduce: `python scripts/validate_real.py` and `python scripts/validate_datasets.py` (clips are not in this repository).
+Reproduce: `python scripts/validate_real.py` and `python scripts/validate_datasets.py`. The clips are not in this repository; download them from the sources above and point `RESONANCE_FOOTAGE` / `RESONANCE_DATASETS` at the folders.
 
 ## Prior work
 
