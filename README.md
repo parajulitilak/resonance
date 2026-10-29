@@ -30,7 +30,7 @@ Built with Muse Spark Open, Muse Spark and SAM 3.1 (Meta). Screening tool: it do
 
 | Clip | Ground truth | Resonance |
 |---|---|---|
-| Cello G string, 7000 fps (Mores & Plath 2018, CC BY 4.0) | T = m v² = 108.8 N (6.15 g/m, 133 m/s), f0 ≈ 98 Hz | verified 18-rung ladder, f0 96.5 Hz, **T = 105.9 ± 2.6 N (−2.6%)** |
+| Cello G string, 7000 fps, two takes (Mores & Plath 2018, CC BY 4.0) | T = m v² = 108.8 N (6.15 g/m, 133 m/s), f0 ≈ 98 Hz | high bow force: verified 18-rung ladder, f0 96.51 Hz, **T = 105.9 ± 2.6 N (−2.6%)**; low bow force: 16 rungs, f0 96.64 Hz, **T = 106.2 ± 2.6 N (−2.4%)**; takes agree within 0.3% |
 | Oak tree sway, 30 fps (Ammatelli et al. 2023, CC BY 4.0) | accelerometer 0.23–0.24 Hz | 0.234 Hz (sideways), 0.245 Hz (vertical) |
 | Bridge-cable model in a wind tunnel, 30 fps (Trush et al., Zenodo 15655246, CC BY 4.0) | accelerometers: f1 ≈ 5 Hz (free decay 5.07 Hz); mode-2 lock-in 9.55 Hz | clip "mode 1": mode 1 by shape, f0 4.96 Hz; clip "mode 2": mode 2 by shape at **9.57 Hz** (+0.2%); clips "mode 3/4": **refused** (aliased at 30 fps) |
 | Shaking-table structure, free decay, 62 fps (Mendeley njhcj2kphr, CC BY 4.0) | laser 4.8467 Hz | **4.832 Hz** (−0.3%) |
