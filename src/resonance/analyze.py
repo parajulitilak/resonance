@@ -102,6 +102,24 @@ def analyze_tracking(tr: Tracking) -> dict:
         fit = fit_harmonics(pk, sp.fs, f0_range=prior, duration=duration)
         reasons = list(fit.reasons)
         status = fit.status
+        single_mode = None
+        if status == "refused" and pk and prior and not camera_reason and not tb.ramped:
+            # One dominant mode and no ladder (e.g. wind lock-in): identify the mode number from its shape
+            # (n - 1 interior nodes), then f0 = f / n. Allowed only if mode n can't be aliased given the prior.
+            ranked = sorted(pk, key=lambda p: -p.power)
+            dom = ranked[0]
+            second = ranked[1].power if len(ranked) > 1 else 0.0
+            n_mode = count_dips(mode_magnitude(sp, dom.f)) + 1
+            f0_est = dom.f / n_mode
+            if (dom.snr >= 50 and dom.power >= 2 * second and n_mode <= 6 and prior[0] <= f0_est <= prior[1]
+                    and n_mode * prior[1] <= sp.fs / 2.5 * 1.001):
+                single_mode = (n_mode, dom)
+                status = "provisional"
+                fit.f0, fit.b = f0_est, 0.0
+                fit.modes = [(n_mode, dom.f, dom.snr)]
+                fit.sigma_override = max(0.05 / duration, 1e-4 * dom.f) / n_mode
+                reasons = [f"single mode identified from its shape: {n_mode - 1} node(s) → mode {n_mode} at "
+                           f"{dom.f:.2f} Hz, so f0 = {f0_est:.3f} Hz (no harmonic ladder to confirm it)"]
         if camera_reason:
             status, reasons = "refused", reasons + [camera_reason]
         if tb.ramped:
@@ -110,7 +128,9 @@ def analyze_tracking(tr: Tracking) -> dict:
                 "use the original recording"]
         # Mode shapes from amplitudes alone: rung 1 must have no interior node, rung 2 exactly one.
         nodes = {}
-        if status != "refused":
+        if single_mode:
+            nodes = {str(single_mode[0]): single_mode[0] - 1}
+        elif status != "refused":
             for n, f, _ in fit.modes:
                 if n <= 2:
                     nodes[str(n)] = count_dips(mode_magnitude(sp, f))

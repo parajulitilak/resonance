@@ -32,11 +32,14 @@ Built with Muse Spark Open, Muse Spark and SAM 3.1 (Meta). Screening tool: it do
 |---|---|---|
 | Cello G string, 7000 fps (Mores & Plath 2018, CC BY 4.0) | T = m v² = 108.8 N (6.15 g/m, 133 m/s), f0 ≈ 98 Hz | verified 18-rung ladder, f0 96.5 Hz, **T = 105.9 ± 2.6 N (−2.6%)** |
 | Oak tree sway, 30 fps (Ammatelli et al. 2023, CC BY 4.0) | accelerometer 0.23–0.24 Hz | 0.234 Hz (sideways), 0.245 Hz (vertical) |
+| Bridge-cable model in a wind tunnel, 30 fps (Trush et al., Zenodo 15655246, CC BY 4.0) | accelerometers: f1 ≈ 5 Hz (free decay 5.07 Hz); mode-2 lock-in 9.55 Hz | clip "mode 1": mode 1 by shape, f0 4.96 Hz; clip "mode 2": mode 2 by shape at **9.57 Hz** (+0.2%); clips "mode 3/4": **refused** (aliased at 30 fps) |
+| Shaking-table structure, free decay, 62 fps (Mendeley njhcj2kphr, CC BY 4.0) | laser 4.8467 Hz | **4.832 Hz** (−0.3%) |
+| High-speed guitar, 600 fps (MIT EVM) | E2 82.41 Hz, A2 110 Hz | 81.0 / 108.5 Hz (−1.7% / −1.4%) by spectrum; tool refuses to certify (0.5 s clip, partial strings, no ladder) |
 | Footbridge with runners crossing, 24 fps (Pexels) | not measurement-grade | **refused**: people pass in front of the tracked deck |
 | Footbridge, drifting handheld camera, 60 fps (Pexels) | not measurement-grade | **refused**: camera moved 24 px RMS, film from a tripod |
 | Slackline with a walker, 25 fps (Pexels) | mass-on-rope, not a free string | **refused** as a cable (no harmonic ladder); bounce at ~1.0 Hz |
 
-Reproduce: `python scripts/validate_real.py` (clips are not in this repository).
+Reproduce: `python scripts/validate_real.py` and `python scripts/validate_datasets.py` (clips are not in this repository).
 
 ## Prior work
 
