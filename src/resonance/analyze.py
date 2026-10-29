@@ -183,9 +183,35 @@ def compare_with_truth(report: dict, truth: dict) -> list[dict]:
     return rows
 
 
-def save(report: dict, out_dir: str | Path) -> Path:
+def _commit() -> str:
+    import subprocess
+    try:
+        return subprocess.run(["git", "-C", str(Path(__file__).resolve().parents[2]), "describe", "--always", "--dirty",
+                               "--tags"], capture_output=True, text=True, timeout=5).stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
+def save(report: dict, out_dir: str | Path, log: str | Path = "out/runs.jsonl") -> Path:
+    """Write report.json and append one line per member to the run log (for later evaluation)."""
+    import hashlib
+    import time
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    report.setdefault("code_version", _commit())
     p = out / "report.json"
     p.write_text(json.dumps(report, indent=2, default=float))
+    video = report.get("video")
+    sha = None
+    if video and Path(video).exists() and Path(video).stat().st_size < 2_000_000_000:
+        sha = hashlib.sha256(Path(video).read_bytes()).hexdigest()
+    Path(log).parent.mkdir(parents=True, exist_ok=True)
+    with open(log, "a") as f:
+        for m in report.get("members", []):
+            lad, ten = m["ladder"], m.get("tension") or {}
+            f.write(json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "run": str(out), "video": video,
+                                "video_sha256": sha, "code": report["code_version"], "fps": report["timing"]["fps"],
+                                "member": m["name"], "kind": m.get("kind", "cable"), "status": lad["status"],
+                                "f0_hz": lad["f0_hz"], "f0_sigma_hz": lad["f0_sigma_hz"], "rungs": len(lad["modes"]),
+                                "tension_n": ten.get("value_n"), "reasons": lad["reasons"]}, default=float) + "\n")
     return p

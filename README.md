@@ -4,6 +4,8 @@ Cable tension and vibration from a phone video. SAM 3.1 places the sensors, phys
 
 Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026). Everything in this repository was written during the event.
 
+Built with Muse Spark Open, Muse Spark and SAM 3.1 (Meta). Screening tool: it does not certify structures; an engineer signs every report.
+
 ## How it works
 
 1. **Timing.** Frame times come from the container's per-frame timestamps, never the nominal frame rate, so slow-motion files with drifting or relabelled rates still give true frequencies.
@@ -35,6 +37,10 @@ Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026). Every
 | Slackline with a walker, 25 fps (Pexels) | mass-on-rope, not a free string | **refused** as a cable (no harmonic ladder); bounce at ~1.0 Hz |
 
 Reproduce: `python scripts/validate_real.py` (clips are not in this repository).
+
+## Prior work
+
+Measuring cable tension from video is established: vision-based frequency identification and automatic frequency sieving (e.g. Wu et al. 2023, doi:10.1155/2023/9343343; Sensors 2021, doi:10.3390/s21217229), reliability under camera shake (Xu et al. 2026, doi:10.1016/j.measurement.2026.121753), and camera-based tension products (RDI Technologies; see also US 11538173 B1 and US 11972577 B1 on recording at a second frame rate). Resonance's focus is different: physics gates that decide when to refuse, an agent that writes the report from tool calls, an independent verifier, and change detection against a baseline. Gate thresholds are frozen in [GATES.md](GATES.md).
 
 Known limits: shake removal is translation-only (camera-coincident peaks are removed); sag assumes a roughly fronto-parallel view.
 
