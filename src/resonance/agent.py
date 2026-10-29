@@ -43,7 +43,7 @@ values given in the context.
 5. Never call anything safe or unsafe. Use flags with severity info, inspect or urgent for the engineer.
 6. If a baseline take exists, call changes_since_baseline and report each change as a relative change with \
 its uncertainty (for example "tension down 18% ± 2% since baseline"), flagging changed members for inspection.
-7. Flags are optional. Raise one only for a real finding (an outlier, a disagreement with a reference or \
+7. Flags are optional, at most one per member. Raise one only for a real finding (an outlier, a disagreement with a reference or \
 design value, a quality problem); never as a placeholder.
 8. Keep statements short and factual: one clean sentence or two, no self-corrections, no question marks. \
 Call submit_report exactly once, at the end."""
@@ -152,6 +152,12 @@ def run_inspector(report: dict, context: str, mode: str = "bench", provider: str
             actions["reshoots"].append(args)
             return {"recorded": True}
         if name == "flag":
+            rank = {"info": 0, "inspect": 1, "urgent": 2}
+            same = [f for f in actions["flags"] if f.get("name") == args.get("name")]
+            if same:  # one flag per member: keep the most severe
+                if rank.get(args.get("severity"), 0) > rank.get(same[0].get("severity"), 0):
+                    actions["flags"][actions["flags"].index(same[0])] = args
+                return {"recorded": True, "note": "one flag per member; kept the most severe"}
             actions["flags"].append(args)
             return {"recorded": True}
         if name == "submit_report":
