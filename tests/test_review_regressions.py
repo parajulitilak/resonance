@@ -151,3 +151,19 @@ def test_patch_refused_when_occluded_or_camera_moves():
     cam = analyze_tracking(Tracking(tb, [m], np.array([0.5]), {"deck": x},
                                     {"deck": {"match_p10": 0.7}}, shake, {"deck": np.ones(1)}))
     assert cam["members"][0]["ladder"]["status"] == "refused" and "camera moved" in cam["members"][0]["ladder"]["reasons"][0]
+
+
+def test_single_mode_identified_by_shape_and_alias_guarded():
+    fs, dur = 30.0, 16.0
+    t = np.arange(int(fs * dur)) / fs
+    s = np.linspace(0.06, 0.94, 32)
+    rng = np.random.default_rng(0)
+    def run(f, n, prior):
+        x = 3.0 * np.sin(n * np.pi * s)[None, :] * np.sin(2 * np.pi * f * t)[:, None] + rng.normal(0, 0.02, (t.size, 32))
+        tb = TimeBase(t=t, fps=fs, nominal_fps=fs, jitter=0.0, time_scale=1.0, source="test")
+        m = Member("c", (300, 450), (1700, 430), f0_range=prior)
+        return analyze_tracking(Tracking(tb, [m], s, {"c": x}, {"c": {"contrast": 80.0}}, None, None))["members"][0]
+    e = run(9.57, 2, (4.0, 6.0))                         # mode-2 lock-in, like the wind-tunnel cable
+    assert e["ladder"]["status"] == "provisional" and abs(e["ladder"]["f0_hz"] - 4.785) < 0.01
+    e = run(10.5, 3, (4.0, 6.0))                         # mode 3 could be aliased at 30 fps: must refuse
+    assert e["ladder"]["status"] == "refused"

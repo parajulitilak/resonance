@@ -17,3 +17,11 @@ Thresholds are frozen in the tagged commit `gates-v1` so that later accuracy and
 | Patch occlusion | `analyze` | frame-to-frame match, 10th percentile < 0.30 → refused (calibrated on 4 clips: provisional) |
 | End fixity | `physics.tension` | ξ < 10 → relative only; pinned/clamped spread > 5% → bracket reported, not reliable |
 | Change detection | `fingerprint.diff` | changed if \|ΔT/T\| > max(2%, 3σ) |
+
+## gates-v2 (2026-10-29, before any benchmark collection)
+
+Added after testing on the open wind-tunnel cable dataset (Zenodo 15655246), which shows single-mode wind lock-in:
+
+| Gate | Where | Threshold (gates-v2) |
+|---|---|---|
+| Single-mode identification | `analyze` | only when the ladder is refused and a prior exists: dominant peak SNR ≥ 50 and ≥ 2× the next peak; mode number n = interior dips + 1 (n ≤ 6); f/n inside the prior; n × prior max ≤ fs / 2.5 (alias guard per mode). Result is provisional, never verified. |
