@@ -125,10 +125,12 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
     f_chip, f_big = _font(24, True), _font(40, True)
 
     with VideoWriter(str(out), OUT_W, OUT_H, out_fps, crf=18) as vw_:
-        frames = [(k, fr) for k, fr in enumerate(read_frames(video)) if not (k % step or k >= tr.n_frames)]
+        k_last = ((tr.n_frames - 1) // step) * step   # the last frame we will draw
         hold = int(1.5 * out_fps)  # after the take ends, hold the final verdicts long enough to read
-        for idx, (k, frame) in enumerate(frames + [frames[-1]] * hold):
-            last = idx >= len(frames) - 1
+        for k, frame in enumerate(read_frames(video)):
+            if k % step or k > k_last:
+                continue
+            last = k == k_last
             canvas = Image.new("RGB", (OUT_W, OUT_H), BG)
             canvas.paste(Image.fromarray(frame).resize((vid_w, vid_h), Image.BILINEAR), (0, oy))
             d = ImageDraw.Draw(canvas, "RGBA")
@@ -213,5 +215,9 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
                     n_r = len(cur[3]) if cur and cur[1] != "refused" else 0
                     d.text((rx, y0 + 24), "listening…", font=f_sub, fill=DIM)
                     d.text((rx, y0 + 54), f"{n_r} rung{'s' if n_r != 1 else ''} matched", font=f_small, fill=DIM)
-            vw_.write(np.asarray(canvas))
+            arr = np.asarray(canvas)
+            vw_.write(arr)
+            if last:
+                for _ in range(hold):
+                    vw_.write(arr)
     return out
