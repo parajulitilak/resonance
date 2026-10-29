@@ -204,13 +204,22 @@ class Handler(BaseHTTPRequestHandler):
             return _json(self, {"job": job_id})
         if u.path == "/api/detect":
             try:
-                from .sam import find_members
+                from . import sam_local
                 from .video import read_frames
                 vid = UPLOADS / Path(body["video"]).name
                 frame = next(iter(read_frames(str(vid))))
-                ms = find_members(frame, body.get("concept", "rope"))
-                return _json(self, {"members": [{"name": m.name, "p0": m.p0, "p1": m.p1,
-                                                 "half_width": m.half_width} for m in ms]})
+                concept = body.get("concept", "rope")
+                if sam_local.available():  # on-device SAM 3.1 (MLX): real masks
+                    ms, extra = sam_local.find_members(frame, concept)
+                    backend = "SAM 3.1 on this computer (MLX)"
+                else:  # Meta Model API: boxes
+                    from .sam import find_members
+                    ms, extra, backend = find_members(frame, concept), [], "SAM 3.1 via Meta Model API"
+                info = {e["name"]: e for e in extra}
+                return _json(self, {"backend": backend, "members": [
+                    {"name": m.name, "p0": [float(v) for v in m.p0], "p1": [float(v) for v in m.p1],
+                     "half_width": m.half_width, **{k: v for k, v in info.get(m.name, {}).items() if k != "name"}}
+                    for m in ms]})
             except Exception as e:  # noqa: BLE001
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 502)
         if u.path.startswith("/api/jobs/") and u.path.endswith("/inspect"):
@@ -234,6 +243,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(port: int = 8765, host: str = "127.0.0.1") -> None:
+    from .llm import load_env
+    load_env()
     RUNS.mkdir(parents=True, exist_ok=True)
     srv = ThreadingHTTPServer((host, port), Handler)
     print(f"Resonance on http://{host}:{port}")

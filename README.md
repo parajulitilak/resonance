@@ -9,7 +9,7 @@ Built with Muse Spark Open, Muse Spark and SAM 3.1 (Meta). Screening tool: it do
 ## How it works
 
 1. **Timing.** Frame times come from the container's per-frame timestamps, never the nominal frame rate, so slow-motion files with drifting or relabelled rates still give true frequencies.
-2. **Sensors.** Each cable is a line of stations. At every station the cross profile is sampled and the cable's position is tracked to a fraction of a pixel. Camera shake is measured on a static anchor (phase correlation, upsampled DFT) and removed along each cable's normal.
+2. **Sensors.** SAM 3.1 finds the cables from a noun phrase ("rope", "cable"); each mask is reduced to its axis and thickness. It runs on the laptop through MLX (no network, which matters at a remote bridge) or through the Meta Model API. Each cable is a line of stations. At every station the cross profile is sampled and the cable's position is tracked to a fraction of a pixel. Camera shake is measured on a static anchor (phase correlation, upsampled DFT) and removed along each cable's normal.
 3. **Spectrum.** Displacement from all stations is combined into one spectrum; peaks are found against a running noise floor.
 4. **Self-checks.** A taut cable rings at `f_n = n f0 sqrt(1 + B n^2)`. A result is *verified* only if the strong peaks sit on one such ladder, the fundamental's mode shape has no interior node (and the 2nd has one), the frame rate is high enough for a coarse frequency prior (the alias guard), and the frame timing is steady. Otherwise it is *provisional* (labelled, with a re-shoot request) or *refused* with the reason.
 5. **Physics.** Taut string with pinned ends: `T = 4 m L^2 f0^2`, with propagated uncertainty and a pinned/clamped bracket when end fixity matters. Members whose bending stiffness is significant (`xi < 10`) get relative comparisons only.
@@ -23,7 +23,7 @@ Built with Muse Spark Open, Muse Spark and SAM 3.1 (Meta). Screening tool: it do
 | Timing, tracking, shake removal, spectrum, verifiers, tension | working; synthetic bench: 5/5 ropes within 0.02% at 240 fps, all refused at 30 fps |
 | Inspection agent + independent verifier + approval | working on Muse Spark Open (Baseten) |
 | Field mode (sag, sway frequency) | working on a synthetic footbridge |
-| SAM 3.1 member detection | client written against the documented wire format; not yet run against the live API |
+| SAM 3.1 member detection | on-device (MLX) backend with mask → axis fitting, tested offline with stub masks; Meta Model API client written against the documented wire format; neither run live yet |
 | Real phone footage | not yet tested |
 
 ## Validation on real footage (independent ground truth)
@@ -54,6 +54,7 @@ export PYTHONPATH=src
 python -m resonance.cli serve                      # web app on http://127.0.0.1:8765
 python -m resonance.cli serve --host 0.0.0.0      # same, reachable from a phone on your Wi-Fi (no login)
 python -m resonance.cli check clip.mov             # before measuring: true fps, timing, shake, exposure
+python -m resonance.cli detect clip.mov --concept rope   # SAM 3.1 members + overlay (set RESONANCE_SAM_PYTHON for on-device)
 python -m resonance.cli synth media/bench240.mp4 --fps 240
 python -m resonance.cli analyze media/bench240.mp4 --truth media/bench240.mp4.json --hero
 python -m resonance.cli inspect out/run --context @notes.txt --mode bench

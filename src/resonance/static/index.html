@@ -168,6 +168,10 @@ function draw(status = {}) {
   const k = c.width / vw, g = c.getContext('2d');
   g.clearRect(0, 0, c.width, c.height); g.lineWidth = 3; g.font = '600 14px -apple-system';
   members.forEach(m => {
+    if (m.outline && m.outline.length > 2) {  // the mask SAM 3.1 returned
+      g.fillStyle = 'rgba(86,180,233,.28)'; g.beginPath();
+      m.outline.forEach(([x, y], i) => i ? g.lineTo(x*k, y*k) : g.moveTo(x*k, y*k)); g.closePath(); g.fill();
+    }
     g.strokeStyle = COLORS[status[m.name] || 'none'];
     g.beginPath(); g.moveTo(m.p0[0]*k, m.p0[1]*k); g.lineTo(m.p1[0]*k, m.p1[1]*k); g.stroke();
     g.fillStyle = g.strokeStyle; g.fillText(m.name, m.p0[0]*k + 6, m.p0[1]*k + 16);
@@ -243,9 +247,10 @@ $('#detect').onclick = async () => {
   $('#status').textContent = 'Asking SAM 3.1…';
   const j = await (await fetch('/api/detect', {method:'POST', body: JSON.stringify({video, concept: $('#concept').value})})).json();
   if (j.error) { $('#status').textContent = 'SAM 3.1: ' + j.error; return; }
-  members = j.members.map(m => ({...m, length_m:null, mass_per_m:null, tension_range:null}));
-  $('#status').textContent = `SAM 3.1 found ${members.length} × "${$('#concept').value}".`;
-  renderMembers(); draw();
+  const found = j.members.map(m => ({...m, length_m:null, mass_per_m:null, tension_range:null}));
+  $('#status').textContent = `${j.backend}: found ${found.length} × "${$('#concept').value}".`;
+  members = [];  // reveal SAM's masks one cable at a time
+  for (const m of found) { members.push(m); renderMembers(); draw(); await new Promise(r => setTimeout(r, 350)); }
 };
 
 const STAGES = {queued:5, tracking:30, analysing:60, rendering:80, done:100, error:100};

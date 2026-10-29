@@ -49,6 +49,11 @@ def main(argv: list[str] | None = None) -> None:
     sv.add_argument("--port", type=int, default=8765)
     sv.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to open it from a phone on the same Wi-Fi")
 
+    dt = sub.add_parser("detect", help="find members with SAM 3.1 (on-device if configured) and save an overlay")
+    dt.add_argument("video")
+    dt.add_argument("--concept", default="rope")
+    dt.add_argument("--out", default="out/detect.png")
+
     ck = sub.add_parser("check", help="check a clip before measuring (true fps, timing, shake, exposure)")
     ck.add_argument("video")
     ck.add_argument("--capture-fps", type=float)
@@ -86,6 +91,37 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "serve":
         from .server import serve
         serve(args.port, args.host)
+        return
+    if args.cmd == "detect":
+        import time
+
+        from PIL import Image, ImageDraw
+
+        from . import sam_local
+        from .llm import load_env
+        from .video import read_frames
+        load_env()
+        frame = next(iter(read_frames(args.video)))
+        t0 = time.time()
+        if sam_local.available():
+            ms, extra = sam_local.find_members(frame, args.concept)
+        else:
+            from .sam import find_members
+            ms, extra = find_members(frame, args.concept), []
+        img = Image.fromarray(frame).convert("RGBA")
+        layer = Image.new("RGBA", img.size)
+        d = ImageDraw.Draw(layer)
+        for e in extra:
+            d.polygon([tuple(p) for p in e["outline"]], fill=(86, 180, 233, 90))
+        for m in ms:
+            d.line([tuple(m.p0), tuple(m.p1)], fill=(38, 196, 170, 255), width=3)
+            d.text((m.p0[0] + 6, m.p0[1] + 4), m.name, fill=(255, 255, 255, 255))
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Image.alpha_composite(img, layer).convert("RGB").save(args.out)
+        for m, e in zip(ms, extra or [{}] * len(ms)):
+            print(f"  {m.name}: ({m.p0[0]:.0f},{m.p0[1]:.0f}) -> ({m.p1[0]:.0f},{m.p1[1]:.0f})  "
+                  f"half-width {m.half_width:.0f} px" + (f"  score {e['score']:.2f}" if e else ""))
+        print(f"{len(ms)} members in {time.time() - t0:.1f} s; overlay {args.out}")
         return
     if args.cmd == "check":
         from .clipcheck import check
