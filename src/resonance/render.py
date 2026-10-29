@@ -115,21 +115,22 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
 
     info = probe(video)
     vh, vw = info.height, info.width
-    scale = OUT_H / vh
-    vid_w = int(round(vw * scale))
+    scale = min(OUT_H / vh, 0.55 * OUT_W / vw)    # portrait fills the height; landscape takes 55% of the width
+    vid_w, vid_h = int(round(vw * scale)), int(round(vh * scale))
+    oy = (OUT_H - vid_h) // 2
     px = vid_w + 40
     pw = OUT_W - px - 40
-    row_h = (OUT_H - 170) / n
+    row_h = min((OUT_H - 170) / n, 300.0)   # a single cable shouldn't become a tall, thin strip
     f_title, f_sub, f_name, f_small = _font(40, True), _font(22), _font(26, True), _font(19)
     f_chip, f_big = _font(24, True), _font(40, True)
 
     with VideoWriter(str(out), OUT_W, OUT_H, out_fps, crf=18) as vw_:
-        for k, frame in enumerate(read_frames(video)):
-            if k % step or k >= tr.n_frames:
-                continue
-            last = k + step >= tr.n_frames
+        frames = [(k, fr) for k, fr in enumerate(read_frames(video)) if not (k % step or k >= tr.n_frames)]
+        hold = int(1.5 * out_fps)  # after the take ends, hold the final verdicts long enough to read
+        for idx, (k, frame) in enumerate(frames + [frames[-1]] * hold):
+            last = idx >= len(frames) - 1
             canvas = Image.new("RGB", (OUT_W, OUT_H), BG)
-            canvas.paste(Image.fromarray(frame).resize((vid_w, OUT_H), Image.BILINEAR), (0, 0))
+            canvas.paste(Image.fromarray(frame).resize((vid_w, vid_h), Image.BILINEAR), (0, oy))
             d = ImageDraw.Draw(canvas, "RGBA")
             for m in members:
                 lk = locks[m.name]["lock_frame"]
@@ -141,9 +142,9 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
                 for s_, du in zip(tr.stations, u):
                     x = m.p0[0] + s_ * (m.p1[0] - m.p0[0]) + magnify * du * m.normal[0]
                     y = m.p0[1] + s_ * (m.p1[1] - m.p0[1]) + magnify * du * m.normal[1]
-                    pts.append((x * scale, y * scale))
-                d.line(pts, fill=col + (235,), width=4)
-                d.text((m.p0[0] * scale - 18, m.p0[1] * scale - 34), m.name, font=f_small, fill=INK)
+                    pts.append((x * scale, y * scale + oy))
+                d.line(pts, fill=col + (240,), width=6)
+                d.text((m.p0[0] * scale - 18, m.p0[1] * scale - 34 + oy), m.name, font=f_small, fill=INK)
             d.rounded_rectangle([16, OUT_H - 52, 210, OUT_H - 16], radius=8, fill=(0, 0, 0, 150))
             d.text((28, OUT_H - 47), f"motion ×{magnify:.0f}", font=f_sub, fill=INK)
 
@@ -158,7 +159,7 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
                 lk = locks[m.name]["lock_frame"]
                 locked = lk is not None and k + 1 >= lk
                 y0 = 150 + i * row_h
-                gx0, gx1, gy0, gy1 = px + 150, px + pw - 300, y0 + 18, y0 + row_h - 34
+                gx0, gx1, gy0, gy1 = px + 150, px + pw - 250, y0 + 18, y0 + row_h - 34
                 d.text((px, y0 + 18), m.name, font=f_name, fill=INK)
                 spec = _rolling_spectrum(t, tr.disp[m.name], k + 1, f_max)
                 d.rectangle([gx0, gy0, gx1, gy1], outline=(60, 66, 78), width=1)
@@ -166,10 +167,14 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
                 ys = gy1 - spec * (gy1 - gy0)
                 d.polygon([(gx0, gy1)] + list(zip(xs, ys)) + [(gx1, gy1)], fill=DATA + (50,))
                 d.line(list(zip(xs, ys)), fill=DATA, width=2)
-                ticks = list(range(0, int(f_max) + 1, 20))
+                raw_step = f_max / 6
+                mag = 10 ** math.floor(math.log10(raw_step))
+                tstep = next(k * mag for k in (1, 2, 5, 10) if k * mag >= raw_step)
+                ticks = [round(k * tstep, 6) for k in range(int(f_max / tstep) + 1)]
                 for hz in ticks:
                     x = gx0 + hz / f_max * (gx1 - gx0)
-                    label = f"{hz} Hz" if hz == ticks[-1] else str(hz)
+                    lab = f"{hz:g}"
+                    label = f"{lab} Hz" if hz == ticks[-1] else lab
                     d.text((x - (d.textlength(label, font=f_small) if hz == ticks[-1] else 8), gy1 + 4), label,
                            font=f_small, fill=DIM)
                 # rungs the running fit has matched so far (model colour, dashed)
