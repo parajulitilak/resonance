@@ -30,6 +30,9 @@ Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026). Every
 |---|---|---|
 | Cello G string, 7000 fps (Mores & Plath 2018, CC BY 4.0) | T = m v² = 108.8 N (6.15 g/m, 133 m/s), f0 ≈ 98 Hz | verified 18-rung ladder, f0 96.5 Hz, **T = 105.9 ± 2.6 N (−2.6%)** |
 | Oak tree sway, 30 fps (Ammatelli et al. 2023, CC BY 4.0) | accelerometer 0.23–0.24 Hz | 0.234 Hz (sideways), 0.245 Hz (vertical) |
+| Footbridge with runners crossing, 24 fps (Pexels) | not measurement-grade | **refused**: people pass in front of the tracked deck |
+| Footbridge, drifting handheld camera, 60 fps (Pexels) | not measurement-grade | **refused**: camera moved 24 px RMS, film from a tripod |
+| Slackline with a walker, 25 fps (Pexels) | mass-on-rope, not a free string | **refused** as a cable (no harmonic ladder); bounce at ~1.0 Hz |
 
 Reproduce: `python scripts/validate_real.py` (clips are not in this repository).
 

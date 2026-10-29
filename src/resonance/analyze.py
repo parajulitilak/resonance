@@ -37,6 +37,12 @@ def analyze_tracking(tr: Tracking) -> dict:
     }
     duration = float(tr.t[-1] - tr.t[0])
     all_peaks: dict[str, list[Peak]] = {}  # cable members only
+    # Camera gate: translation is removed, but large camera motion also brings rotation, zoom and parallax.
+    camera_reason = None
+    if report["shake_px"] and report["shake_px"]["rms"] > 5.0:
+        camera_reason = (f"camera moved {report['shake_px']['rms']:.0f} px RMS (max {report['shake_px']['max']:.0f} px): "
+                         "too much to correct; film from a tripod or rest the phone on something solid")
+    report["camera_gate"] = camera_reason
     for m in tr.members:
         w = tr.weights[m.name] if tr.weights else None
         sp = spectrum(tr.t, tr.disp[m.name], weights=w, pad=8 if m.kind == "patch" else 4)
@@ -68,11 +74,22 @@ def analyze_tracking(tr: Tracking) -> dict:
         if m.kind == "patch":
             pk = [p for p in local_peaks(sp, f_min=0.1) if not any(abs(p.f - f) <= 0.01 * f for f in shake_f)]
             dom = max(pk, key=lambda p: p.power) if pk else None
+            q = tr.quality[m.name]
+            gate = []
+            if camera_reason:
+                gate.append(camera_reason)
+            # frame-to-frame match, 10th percentile. Calibrated on 4 clips (tree 0.60, cello 0.36 valid;
+            # runners crossing a deck 0.24-0.27): provisional threshold
+            if q.get("match_p10", 1.0) < 0.30:
+                gate.append(f"the tracked patch changes between frames (match {q['match_p10']:.2f} at the 10th "
+                            "percentile, below 0.30): people or objects pass in front of it")
+            if gate:
+                dom = None
             report["members"].append({
                 "name": m.name, "kind": "patch", "box": list(m.box), "direction": list(m.direction),
                 "quality": tr.quality[m.name], "peaks": [asdict(p) for p in pk],
                 "ladder": {"ok": False, "status": "frequency" if dom else "refused",
-                           "reasons": [] if dom else ["no clear vibration peak in the patch motion"],
+                           "reasons": [] if dom else (gate or ["no clear vibration peak in the patch motion"]),
                            "f0_hz": dom.f if dom else float("nan"),
                            "f0_sigma_hz": (0.05 / duration) if dom else float("nan"), "b": 0.0,
                            "rel_residual": float("nan"), "explained": 0.0, "modes": []},
@@ -85,6 +102,8 @@ def analyze_tracking(tr: Tracking) -> dict:
         fit = fit_harmonics(pk, sp.fs, f0_range=prior, duration=duration)
         reasons = list(fit.reasons)
         status = fit.status
+        if camera_reason:
+            status, reasons = "refused", reasons + [camera_reason]
         if tb.ramped:
             status, reasons = "refused", reasons + [
                 "frame timing changes during the clip (an exported slow-motion file with real-time ramps?): "

@@ -133,3 +133,21 @@ def test_major10_quantised_timestamps_dequantised(tmp_path):
     tb = frame_times(str(vid))
     assert tb.fps == pytest.approx(240.0, rel=2e-3)
     assert tb.jitter < 0.02
+
+
+def test_patch_refused_when_occluded_or_camera_moves():
+    fs = 30.0
+    t = np.arange(600) / fs
+    x = (np.sin(2 * np.pi * 1.2 * t) + 0.05 * np.random.default_rng(0).normal(size=t.size))[:, None]
+    tb = TimeBase(t=t, fps=fs, nominal_fps=fs, jitter=0.0, time_scale=1.0, source="test")
+    m = Member("deck", (100, 100), (100, 200), kind="patch", box=(50, 100, 150, 200))
+    ok = analyze_tracking(Tracking(tb, [m], np.array([0.5]), {"deck": x},
+                                   {"deck": {"match_p10": 0.7}}, None, {"deck": np.ones(1)}))
+    assert ok["members"][0]["ladder"]["status"] == "frequency"
+    occl = analyze_tracking(Tracking(tb, [m], np.array([0.5]), {"deck": x},
+                                     {"deck": {"match_p10": 0.2}}, None, {"deck": np.ones(1)}))
+    assert occl["members"][0]["ladder"]["status"] == "refused"
+    shake = np.column_stack([20 * np.sin(2 * np.pi * 0.1 * t), np.zeros_like(t)])
+    cam = analyze_tracking(Tracking(tb, [m], np.array([0.5]), {"deck": x},
+                                    {"deck": {"match_p10": 0.7}}, shake, {"deck": np.ones(1)}))
+    assert cam["members"][0]["ladder"]["status"] == "refused" and "camera moved" in cam["members"][0]["ladder"]["reasons"][0]

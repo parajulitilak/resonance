@@ -54,13 +54,18 @@ def _refine(r: np.ndarray, y0: float, x0: float, factor: int, span: float) -> tu
     return float(ys[iy]), float(xs[ix])
 
 
-def phase_shift(ref_fft: np.ndarray, img: np.ndarray, win: np.ndarray) -> tuple[float, float]:
-    """Shift (dx, dy) of `img` relative to the reference, to ~0.01 px (upsampled phase correlation)."""
+def phase_shift(ref_fft: np.ndarray, img: np.ndarray, win: np.ndarray, quality: list | None = None) -> tuple[float, float]:
+    """Shift (dx, dy) of `img` relative to the reference, to ~0.01 px (upsampled phase correlation).
+
+    If `quality` is given, the normalised correlation peak (1 = identical texture, ~0 = no match) is appended.
+    """
     f = np.fft.fft2((img - img.mean()) * win)
     r = f * np.conj(ref_fft)
     r /= np.abs(r) + 1e-9
     c = np.fft.ifft2(r).real
     iy, ix = np.unravel_index(np.argmax(c), c.shape)
+    if quality is not None:
+        quality.append(float(c[iy, ix]))
     h, w = c.shape
     y0 = iy - h if iy > h / 2 else iy
     x0 = ix - w if ix > w / 2 else ix
@@ -92,6 +97,8 @@ def track(path: str, members: list[Member], anchor: tuple[int, int, int, int] | 
     members = [m for m in members if m.kind != "patch"]
     pref: dict[str, tuple] = {}
     pshift: dict[str, list] = {m.name: [] for m in patches}
+    pqual: dict[str, list] = {m.name: [] for m in patches}   # frame-to-frame match (occlusion detector)
+    pprev: dict[str, np.ndarray] = {}
     grids = {m.name: m.sample_grid(n_stations) for m in members}
     polarity: dict[str, np.ndarray] = {}
     warm: dict[str, list] = {m.name: [] for m in members}
@@ -110,6 +117,10 @@ def track(path: str, members: list[Member], anchor: tuple[int, int, int, int] | 
                 w_ = _hann2d(*crop.shape)
                 pref[m.name] = (np.fft.fft2((crop - crop.mean()) * w_), w_)
             pshift[m.name].append(phase_shift(pref[m.name][0], crop, pref[m.name][1]))
+            cur = np.fft.fft2((crop - crop.mean()) * pref[m.name][1])
+            if m.name in pprev:  # does this frame still look like the previous one? (drops when something passes)
+                phase_shift(pprev[m.name], crop, pref[m.name][1], pqual[m.name])
+            pprev[m.name] = cur
         if anchor:
             x0, y0, x1, y1 = anchor
             crop = f[y0:y1, x0:x1]
@@ -155,8 +166,10 @@ def track(path: str, members: list[Member], anchor: tuple[int, int, int, int] | 
             d2 = d2 - sh[: d2.shape[0]]
         disp[m.name] = (d2 @ m.normal)[:, None]
         weights[m.name] = np.ones(1)
+        q = np.array(pqual[m.name]) if pqual[m.name] else np.array([1.0])
         quality[m.name] = {"contrast": float("nan"), "hf_motion_px": float(np.std(np.diff(disp[m.name][:, 0], 2)) / np.sqrt(6)),
-                           "stations_used": 1, "stations": 1, "kind": "patch"}
+                           "stations_used": 1, "stations": 1, "kind": "patch",
+                           "match_median": float(np.median(q)), "match_p10": float(np.percentile(q, 10))}
     for m in members:
         d = disp[m.name]
         cs = np.median(np.array(contrast[m.name]), 0)        # per-station contrast

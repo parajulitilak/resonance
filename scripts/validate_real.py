@@ -22,3 +22,12 @@ rep = analyze(f"{F}/treesway_trout_lake/trout-e.MP4",
                patch("trunk_y", (900, 520, 1156, 904), direction=(0, 1))])
 for m in rep["members"]:
     print(f"tree {m['name']}: {m['ladder']['f0_hz']:.3f} Hz vs accelerometer 0.23-0.24 Hz")
+
+# 3. Stock footage that is NOT measurement-grade: Resonance must refuse, with the reason
+for name, v, ms, anchor in [
+        ("forest footbridge, runners crossing", f"{F}/pexels_forest_bridge_runners_side/pexels_forest_bridge_runners_side.mp4",
+         [patch("deck", (500, 410, 660, 490))], None),
+        ("red footbridge, drifting camera", f"{F}/pexels_red_suspension_bridge_crowd_60fps/pexels_red_suspension_bridge_crowd_60fps.mp4",
+         [patch("deck", (1120, 490, 1280, 550))], (80, 660, 200, 840))]:
+    m = analyze(v, ms, anchor=anchor)["members"][0]
+    print(f"{name}: {m['ladder']['status']} ({m['ladder']['reasons'][0][:70]}…)")
