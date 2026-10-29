@@ -52,6 +52,8 @@ Known limits: shake removal is translation-only (camera-coincident peaks are rem
 ```bash
 export PYTHONPATH=src
 python -m resonance.cli serve                      # web app on http://127.0.0.1:8765
+python -m resonance.cli serve --host 0.0.0.0      # same, reachable from a phone on your Wi-Fi (no login)
+python -m resonance.cli check clip.mov             # before measuring: true fps, timing, shake, exposure
 python -m resonance.cli synth media/bench240.mp4 --fps 240
 python -m resonance.cli analyze media/bench240.mp4 --truth media/bench240.mp4.json --hero
 python -m resonance.cli inspect out/run --context @notes.txt --mode bench

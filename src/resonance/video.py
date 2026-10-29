@@ -61,6 +61,8 @@ def read_frames(path: str, width: int | None = None, gray: bool = False) -> Iter
                 break
             yield np.frombuffer(buf, np.uint8).reshape(shape)
     finally:
+        if p.poll() is None:  # stopped early: end ffmpeg quietly instead of letting it hit a broken pipe
+            p.kill()
         p.stdout.close()
         p.wait()
 

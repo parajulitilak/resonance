@@ -47,6 +47,11 @@ def main(argv: list[str] | None = None) -> None:
 
     sv = sub.add_parser("serve", help="local web app on http://127.0.0.1:8765")
     sv.add_argument("--port", type=int, default=8765)
+    sv.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to open it from a phone on the same Wi-Fi")
+
+    ck = sub.add_parser("check", help="check a clip before measuring (true fps, timing, shake, exposure)")
+    ck.add_argument("video")
+    ck.add_argument("--capture-fps", type=float)
 
     c = sub.add_parser("confirm", help="cross-check two takes of the same members (second-take alias guard)")
     c.add_argument("run_a")
@@ -80,7 +85,14 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.cmd == "serve":
         from .server import serve
-        serve(args.port)
+        serve(args.port, args.host)
+        return
+    if args.cmd == "check":
+        from .clipcheck import check
+        r = check(args.video, capture_fps=args.capture_fps)
+        for c in r["checks"]:
+            print(f"  {c['status']:<4}  {c['key']:<10}  {c['text']}")
+        print(r["summary"])
         return
     if args.cmd == "confirm":
         from .takes import confirm

@@ -63,6 +63,21 @@
         border-radius:5px; padding:1px 6px; }
   .delta { display:inline-block; margin-left:8px; font-weight:700; font-size:13px; }
   a { color:var(--model); }
+  details.guide { margin-top:10px; }
+  details.guide summary { cursor:pointer; color:var(--dim); font-size:13px; }
+  details.guide ol { margin:8px 0 0; padding-left:20px; font-size:14px; }
+  .checks { margin-top:10px; }
+  .chk { display:grid; grid-template-columns:14px 92px minmax(0,1fr); gap:8px; align-items:baseline; padding:4px 0;
+         border-bottom:1px solid var(--line); font-size:13.5px; }
+  .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .dot.ok { background:var(--ok); } .dot.warn { background:var(--prov); } .dot.fail { background:var(--bad); }
+  @media (max-width: 760px) {
+    header { flex-wrap:wrap; padding:16px 16px 0; gap:6px; }
+    header p:last-child { margin-left:0; }
+    main { grid-template-columns:1fr; padding:12px 12px 40px; gap:14px; }
+    .cols { grid-template-columns:1fr !important; }
+    .chk { grid-template-columns:14px 78px minmax(0,1fr); }
+  }
 </style>
 </head>
 <body>
@@ -76,7 +91,15 @@
     <h2><span class="step">1</span>Clip</h2>
     <div id="drop" class="drop">Drop the original slow-motion clip here (240 fps, not a forwarded copy) or
       <label style="color:var(--ok);cursor:pointer">choose a file<input id="file" type="file" accept="video/*" hidden></label></div>
+    <details class="guide"><summary>How to film (30 seconds of care saves a re-shoot)</summary><ol>
+      <li>Slow motion (240 fps). Send the <b>original</b> file: AirDrop, cable or "Files"; chat apps re-encode it at normal speed.</li>
+      <li>Phone braced on a tripod, railing or wall, about 1–1.5 m from a bench rope or 3–10 m from a bridge cable. Do not hold it in the air.</li>
+      <li>Film side-on, the cable across the frame against sky or a plain wall. Tap and hold on the cable to lock focus and exposure.</li>
+      <li>Keep something that does not move in view (tower, wall, rock): it becomes the anchor that removes camera shake.</li>
+      <li>Pluck the rope once (bench) or let wind and footfall excite the bridge, and film at least 5 s.</li>
+      <li>For a confirmed result film a second take at a different rate (120 fps).</li></ol></details>
     <div id="clipinfo" class="muted" style="margin-top:8px"></div>
+    <div id="checks" class="checks"></div>
     <div id="stage" hidden>
       <img id="frame" alt="first frame">
       <canvas id="overlay"></canvas>
@@ -185,6 +208,16 @@ async function upload(file) {
   $('#frame').src = '/api/frame?video=' + video; $('#stage').hidden = false;
   $('#frame').onload = () => draw();
   $('#detect').disabled = false; $('#anchorBtn').disabled = false; renderMembers();
+  checkClip();
+}
+
+async function checkClip() {
+  $('#checks').innerHTML = '<div class="muted">Checking the clip: true frame rate, timing, camera shake, exposure…</div>';
+  const j = await (await fetch('/api/check?video=' + video)).json();
+  if (j.error) { $('#checks').innerHTML = `<div class="muted">Clip check failed: ${esc(j.error)}</div>`; return; }
+  const cls = {ok: 'ok', warn: 'warn', fail: 'bad'}[j.status];
+  $('#checks').innerHTML = j.checks.map(c => `<div class="chk"><span class="dot ${c.status}"></span><b>${esc(c.key)}</b>
+    <span>${esc(c.text)}</span></div>`).join('') + `<div class="card ${cls}" style="margin-top:10px">${esc(j.summary)}</div>`;
 }
 $('#file').onchange = e => e.target.files[0] && upload(e.target.files[0]);
 const drop = $('#drop');
@@ -338,8 +371,15 @@ async function approve() {
   showAgent(await (await fetch('/api/jobs/' + job)).json());
 }
 
-// replay a finished run: ?run=<id>
+// replay a finished run: ?run=<id>; reopen an uploaded clip: ?video=<name>
 const params = new URLSearchParams(location.search);
+if (params.get('video') && !params.get('run')) {
+  video = params.get('video');
+  $('#frame').onload = () => { vw = $('#frame').naturalWidth; vh = $('#frame').naturalHeight;
+    $('#clipinfo').textContent = `${video} · ${vw}×${vh}`; draw(); };
+  $('#frame').src = '/api/frame?video=' + video; $('#stage').hidden = false;
+  $('#detect').disabled = false; $('#anchorBtn').disabled = false; renderMembers(); checkClip();
+}
 if (params.get('run')) {
   job = params.get('run');
   fetch('/api/jobs/' + job).then(r => r.json()).then(j => {

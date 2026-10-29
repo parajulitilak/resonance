@@ -143,6 +143,14 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(png)
             return
+        if u.path == "/api/check":
+            from .clipcheck import check
+            vid = UPLOADS / Path(q["video"][0]).name
+            fps = float(q["capture_fps"][0]) if q.get("capture_fps") else None
+            try:
+                return _json(self, check(str(vid), capture_fps=fps))
+            except Exception as e:  # noqa: BLE001
+                return _json(self, {"error": f"{type(e).__name__}: {e}"}, 500)
         if u.path == "/api/runs":
             runs = sorted((p.name for p in RUNS.glob("*") if (p / "report.json").exists()), reverse=True)
             return _json(self, {"runs": runs[:50]})
@@ -225,8 +233,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
 
-def serve(port: int = 8765) -> None:
+def serve(port: int = 8765, host: str = "127.0.0.1") -> None:
     RUNS.mkdir(parents=True, exist_ok=True)
-    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    print(f"Resonance on http://127.0.0.1:{port}")
+    srv = ThreadingHTTPServer((host, port), Handler)
+    print(f"Resonance on http://{host}:{port}")
+    if host != "127.0.0.1":
+        print("  no login on this server: open it only on a network you trust")
     srv.serve_forever()
