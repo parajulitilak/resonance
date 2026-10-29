@@ -274,6 +274,32 @@ function tensionBlock(m) {
     <div class="muted">± ${T.sigma_n.toFixed(1)} N · f0 ${L.f0_hz.toFixed(3)} Hz · ${L.modes.length} rungs</div>`;
 }
 
+function specSvg(m) {
+  const S = m.spectrum, L = m.ladder; if (!S) return '';
+  const N = S.snr_db.length, H = 60, y = d => (H - 2 - Math.min(d, 40) / 40 * (H - 6)).toFixed(1);
+  const pts = S.snr_db.map((d, i) => `${i + 0.5},${y(d)}`).join(' ');
+  let model = '';
+  if ((L.status === 'verified' || L.status === 'provisional') && L.f0_hz > 0) {
+    const hit = new Set(L.modes.map(r => r.n));
+    for (let n = 1; n < 60; n++) {
+      const f = n * L.f0_hz * Math.sqrt(1 + (L.b || 0) * n * n); if (f > S.f_max_hz) break;
+      const x = (f / S.f_max_hz * N).toFixed(1);
+      model += `<line x1="${x}" x2="${x}" y1="4" y2="${H}" stroke="var(--model)" stroke-dasharray="2 2" opacity=".75" vector-effect="non-scaling-stroke"/>`;
+      if (hit.has(n)) model += `<line x1="${x}" x2="${x}" y1="2" y2="6" stroke="${COLORS[L.status]}" stroke-width="4" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
+    }
+  } else if (L.status === 'frequency' && L.f0_hz > 0) {
+    const x = (L.f0_hz / S.f_max_hz * N).toFixed(1);
+    model = `<line x1="${x}" x2="${x}" y1="4" y2="${H}" stroke="var(--model)" stroke-dasharray="2 2" vector-effect="non-scaling-stroke"/>`;
+  }
+  const nodes = Object.entries(m.mode_nodes || {}).map(([n, k]) =>
+    `rung ${n}: ${k} node${k === 1 ? '' : 's'} ${k === Number(n) - 1 ? '✓' : '✗'}`).join(' · ');
+  return `<svg viewBox="0 0 ${N} ${H}" preserveAspectRatio="none" style="width:100%;height:${H}px;margin-top:8px;display:block">
+      <polygon points="0,${H} ${pts} ${N},${H}" fill="var(--data)" opacity=".12"/>
+      <polyline points="${pts}" fill="none" stroke="var(--data)" stroke-width="1.2" vector-effect="non-scaling-stroke"/>${model}</svg>
+    <div class="row muted" style="justify-content:space-between;font-size:11.5px"><span>0 Hz</span><span>${S.f_max_hz.toFixed(0)} Hz</span></div>
+    <div class="muted" style="font-size:11.5px">grey: measured, dB over noise · blue: harmonic model, dot = rung found${nodes ? ' · mode shape ' + nodes : ''}</div>`;
+}
+
 function showReport(rep) {
   report = rep;
   const st = {}; const out = [];
@@ -283,6 +309,7 @@ function showReport(rep) {
     out.push(`<div class="card ${cls}" data-member="${esc(m.name)}"><div class="row" style="justify-content:space-between">
       <b>${esc(m.name)}<span class="delta"></span></b><span class="chip ${L.status}">${L.status.toUpperCase()}</span></div>
       ${tensionBlock(m)}
+      ${specSvg(m)}
       ${L.reasons.length ? `<div class="muted" style="margin-top:6px">${L.reasons.map(esc).join('<br>')}</div>` : ''}
       ${L.status === 'refused' ? `<div style="margin-top:8px"><b>Re-shoot:</b> original 240 fps file, phone on a stand 1–1.5 m away,
         perpendicular to the cable, pluck once, film 5 s.</div>` : ''}</div>`);

@@ -22,6 +22,17 @@ def _shake_peaks(tr: Tracking) -> list[float]:
     return [p.f for p in peaks(sp, min_snr=10.0)]
 
 
+def _thumb(sp, pk, bins: int = 240) -> dict:
+    """A small copy of the spectrum for the report page: highest dB above the noise floor in each bin."""
+    hi = sp.fs / 2 if not pk else min(sp.fs / 2, max(2.0, 1.25 * max(p.f for p in pk)))
+    sel = (sp.f > 0) & (sp.f <= hi)
+    db = 10 * np.log10(np.maximum(sp.power[sel] / np.maximum(sp.floor[sel], 1e-30), 1.0))
+    idx = np.minimum((sp.f[sel] / hi * bins).astype(int), bins - 1)
+    out = np.zeros(bins)
+    np.maximum.at(out, idx, db)
+    return {"f_max_hz": float(hi), "snr_db": [round(float(x), 1) for x in out]}
+
+
 def analyze_tracking(tr: Tracking) -> dict:
     tb = tr.timebase
     shake_f = _shake_peaks(tr)
@@ -69,6 +80,7 @@ def analyze_tracking(tr: Tracking) -> dict:
                                     "inputs": {"length_m": m.length_m, "mass_per_m": m.mass_per_m}}
             else:
                 entry["tension"] = {"value_n": None, "note": "refused: " + "; ".join(fit.reasons)}
+            entry["spectrum"] = _thumb(sp, pk)
             report["members"].append(entry)
             continue
         if m.kind == "patch":
@@ -93,7 +105,8 @@ def analyze_tracking(tr: Tracking) -> dict:
                            "f0_hz": dom.f if dom else float("nan"),
                            "f0_sigma_hz": (0.05 / duration) if dom else float("nan"), "b": 0.0,
                            "rel_residual": float("nan"), "explained": 0.0, "modes": []},
-                "mode_nodes": {}, "tension": {"value_n": None, "note": "patch: frequencies only, no tension physics"}})
+                "mode_nodes": {}, "tension": {"value_n": None, "note": "patch: frequencies only, no tension physics"},
+                "spectrum": _thumb(sp, pk)})
             continue
         # drop peaks the camera made (they appear in the anchor's own motion)
         pk = [p for p in pk_all if not any(abs(p.f - f) <= max(0.01 * f, 2 * (sp.f[1] - sp.f[0])) for f in shake_f)]
@@ -162,6 +175,7 @@ def analyze_tracking(tr: Tracking) -> dict:
             entry["tension"] = {"value_n": None, "note": "refused: " + "; ".join(reasons)}
         else:
             entry["tension"] = {"value_n": None, "note": f"{status}: length and mass per metre not given"}
+        entry["spectrum"] = _thumb(sp, pk)
         report["members"].append(entry)
     # Peaks shared by most members at once are structure-wide (deck, frame) or camera motion: flag them.
     names = list(all_peaks)
