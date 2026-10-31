@@ -185,7 +185,7 @@ function renderMembers() {
   const tb = $('#members tbody'); tb.innerHTML = '';
   members.forEach((m, i) => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td><input value="${esc(m.name)}" data-k="name"></td>
+    tr.innerHTML = `<td><input value="${esc(m.name)}" data-k="name">${m.score != null ? `<div class="muted" style="font-size:11.5px">SAM ${m.score.toFixed(2)}</div>` : ''}</td>
       <td><input value="${m.length_m ?? ''}" data-k="length_m" placeholder="1.80"></td>
       <td><input value="${m.mass_per_m ?? ''}" data-k="mass_per_m" placeholder="0.022"></td>
       <td><input value="${m.tension_range ? m.tension_range.join('-') : ''}" data-k="tension_range" placeholder="5-300"></td>
@@ -411,6 +411,7 @@ if (params.get('video') && !params.get('run')) {
     $('#clipinfo').textContent = `${video} · ${vw}×${vh}`; draw(); };
   $('#frame').src = '/api/frame?video=' + video; $('#stage').hidden = false;
   $('#detect').disabled = false; $('#anchorBtn').disabled = false; renderMembers(); checkClip();
+  if (params.get('detect')) { $('#concept').value = params.get('detect'); $('#detect').click(); }
 }
 if (params.get('run')) {
   job = params.get('run');
