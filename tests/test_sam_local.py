@@ -30,6 +30,28 @@ def test_masks_become_members_left_to_right_and_blobs_are_dropped(monkeypatch):
     assert len(extra[0]["outline"]) > 20 and extra[1]["score"] == pytest.approx(0.7)
 
 
+def test_duplicate_masks_of_one_cable_are_merged(monkeypatch):
+    seg = _fake_segment()
+    dup = seg["masks"][0].copy()
+    dup[:, 221:223] = True                                            # same cable, slightly fatter mask
+    seg = {"boxes": np.vstack([seg["boxes"], [[218, 40, 223, 360]]]),
+           "scores": np.append(seg["scores"], 0.5).astype(np.float32), "masks": np.vstack([seg["masks"], dup[None]])}
+    monkeypatch.setattr(sam_local, "segment", lambda frame, concept, threshold=0.3: seg)
+    members, extra = sam_local.find_members(np.zeros((400, 300, 3), np.uint8), "rope")
+    assert len(members) == 3 and extra[2]["score"] == pytest.approx(0.9)
+
+
+def test_mask_with_handrail_and_stray_blob_keeps_the_hanger_line():
+    from resonance.members import from_mask
+    m = np.zeros((400, 300), bool)
+    m[20:380, 147:154] = True          # the hanger, 7 px wide
+    m[100:112, 150:290] = True         # a strip of handrail SAM included, touching the hanger
+    m[300:340, 10:60] = True           # a separate blob
+    mem = from_mask("h", m)
+    assert abs(mem.p0[0] - 150) < 2 and abs(mem.p1[0] - 150) < 2
+    assert mem.meta["width_px"] == pytest.approx(7, abs=1.5) and mem.length_px > 320
+
+
 def test_worker_failure_is_reported(monkeypatch, tmp_path):
     bad = tmp_path / "py"
     bad.write_text("#!/bin/sh\necho boom >&2\nexit 3\n")

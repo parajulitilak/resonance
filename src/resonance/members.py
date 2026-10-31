@@ -68,8 +68,18 @@ class Member:
         return pts[..., 0], pts[..., 1], s, o
 
 
-def from_mask(name: str, mask: np.ndarray, trim: float = 0.03, **kw) -> Member:
-    """Fit a member to a binary mask: principal axis, extreme points, thickness."""
+def from_mask(name: str, mask: np.ndarray, trim: float = 0.03, stations: int = 40, **kw) -> Member:
+    """Fit a member to a binary mask: centre line and thickness.
+
+    Real masks carry extras (a clamp, a strip of handrail, a stray blob), so only the largest connected
+    piece is used, the line is fitted through the median position at each station rather than through all
+    pixels, and it is refitted on the pixels near it. `meta["width_px"]` is the median width across stations.
+    """
+    from scipy import ndimage
+
+    lab, n = ndimage.label(mask)
+    if n > 1:
+        mask = lab == (np.argmax(np.bincount(lab.ravel())[1:]) + 1)
     ys, xs = np.nonzero(mask)
     if xs.size < 20:
         raise ValueError(f"mask for {name} is too small")
@@ -77,13 +87,37 @@ def from_mask(name: str, mask: np.ndarray, trim: float = 0.03, **kw) -> Member:
     c = pts.mean(0)
     _, _, vt = np.linalg.svd(pts - c, full_matrices=False)
     u = vt[0]
-    proj = (pts - c) @ u
-    lo, hi = np.quantile(proj, [trim, 1 - trim])
-    thickness = float(np.quantile(np.abs((pts - c) @ vt[1]), 0.95) * 2)
+    width = None
+    for _ in range(3):  # fit, then refit on the pixels near the fitted line only
+        v = np.array([-u[1], u[0]])
+        a, b = (pts - c) @ u, (pts - c) @ v
+        if width is not None:
+            near = np.abs(b) <= max(3 * width, 6.0)
+            a, b = a[near], b[near]
+        lo, hi = np.quantile(a, [trim, 1 - trim])
+        edges = np.linspace(lo, hi, stations + 1)
+        mids, meds, widths = [], [], []
+        for e0, e1 in zip(edges[:-1], edges[1:]):
+            sel = (a >= e0) & (a < e1)
+            if sel.sum() >= 3:
+                mids.append(0.5 * (e0 + e1))
+                meds.append(np.median(b[sel]))
+                widths.append(np.quantile(b[sel], 0.9) - np.quantile(b[sel], 0.1) + 1.0)
+        mids, meds, widths = np.array(mids), np.array(meds), np.array(widths)
+        keep = np.ones(mids.size, bool)
+        for _ in range(2):  # line through the station medians, then again without the stations far off it
+            k, d = np.polyfit(mids[keep], meds[keep], 1)
+            r = meds - (k * mids + d)
+            keep = np.abs(r) <= 3 * (np.median(np.abs(r[keep])) + 0.5)
+        width = float(np.median(widths[keep]))
+        c = c + d * v
+        u = (u + k * v) / np.hypot(1.0, k)
     p0, p1 = c + lo * u, c + hi * u
     if p0[1] > p1[1]:  # keep p0 on top for vertical members
         p0, p1 = p1, p0
-    return Member(name, tuple(p0), tuple(p1), half_width=max(6.0, 2.5 * thickness), **kw)
+    m = Member(name, tuple(p0), tuple(p1), half_width=float(np.clip(2.5 * width, 6.0, 60.0)), **kw)
+    m.meta["width_px"] = width
+    return m
 
 
 def patch(name: str, box: tuple[int, int, int, int], direction=(0.0, 1.0), **kw) -> Member:

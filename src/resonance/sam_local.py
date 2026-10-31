@@ -43,8 +43,10 @@ def segment(frame_rgb: np.ndarray, concept: str, threshold: float = 0.3, timeout
 
 
 def outline(mask: np.ndarray, member: Member, stations: int = 40) -> list[list[float]]:
-    """A polygon around an elongated mask: its width at stations along the member's axis."""
+    """A polygon around an elongated mask near the member: its width at stations along the member's axis."""
     ys, xs = np.nonzero(mask)
+    near = np.abs((np.column_stack([xs, ys]) - np.asarray(member.p0, float)) @ member.normal) <= member.half_width
+    xs, ys = xs[near], ys[near]
     pts = np.column_stack([xs, ys]).astype(float)
     p0 = np.asarray(member.p0, float)
     u = member.axis
@@ -57,8 +59,8 @@ def outline(mask: np.ndarray, member: Member, stations: int = 40) -> list[list[f
         if not sel.any():
             continue
         s = 0.5 * (lo + hi)
-        left.append(p0 + s * u + b[sel].min() * n)
-        right.append(p0 + s * u + b[sel].max() * n)
+        left.append(p0 + s * u + np.quantile(b[sel], 0.02) * n)
+        right.append(p0 + s * u + np.quantile(b[sel], 0.98) * n)
     return [[round(float(x), 1), round(float(y), 1)] for x, y in left + right[::-1]]
 
 
@@ -67,15 +69,19 @@ def find_members(frame_rgb: np.ndarray, concept: str = "rope", prefix: str = "m"
     """Members (left to right) and, for each, SAM's score and mask outline. Blobs (weights, people) are
     dropped: a cable's mask is at least `min_elongation` times longer than it is thick."""
     seg = segment(frame_rgb, concept, threshold=min_score)
-    found = []
-    for box, score, mask in zip(seg["boxes"], seg["scores"], seg["masks"]):
+    found, kept = [], []
+    for k in np.argsort(-seg["scores"]):  # best first; drop masks that repeat a better one
+        box, score, mask = seg["boxes"][k], seg["scores"][k], seg["masks"][k]
+        area = mask.sum()
+        if area == 0 or any((mask & q).sum() > 0.5 * min(area, q.sum()) for q in kept):
+            continue
         try:
             m = from_mask("tmp", mask)
         except ValueError:
             continue
-        thickness = max(m.half_width / 2.5, 1.0)
-        if m.length_px / thickness < min_elongation:
+        if m.length_px / max(m.meta["width_px"], 1.0) < min_elongation:
             continue
+        kept.append(mask)
         found.append((0.5 * (m.p0[0] + m.p1[0]), m, float(score), mask))
     found.sort(key=lambda t: t[0])
     members, extra = [], []
