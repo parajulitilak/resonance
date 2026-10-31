@@ -24,6 +24,23 @@ for k in (1, 2, 3, 4):
           f"top peaks {[round(p['f'], 2) for p in sorted(e['peaks'], key=lambda p: -p['power'])[:3]]} "
           f"| {L['reasons'][:1]}")
 
+# 1b. Same clips with the member placed by SAM 3.1 instead of by hand (needs RESONANCE_SAM_PYTHON; see .env.example).
+from resonance import sam_local  # noqa: E402
+from resonance.llm import load_env  # noqa: E402
+from resonance.video import read_frames  # noqa: E402
+
+load_env()
+if sam_local.available():
+    print("== FLAMBRG, member placed by SAM 3.1 ('horizontal bar', best-scoring mask)")
+    for k in (1, 2):
+        v = f"{D}/zenodo15655246_flambrg_cable_windtunnel/iced90_5Hz_yaw0_mode{k}_side.mp4"
+        ms, extra = sam_local.find_members(next(iter(read_frames(v))), "horizontal bar")
+        m, x = max(zip(ms, extra), key=lambda t: t[1]["score"])
+        m.name, m.f0_range = f"sam_mode{k}", (4.0, 6.0)
+        L = analyze(v, [m])["members"][0]["ladder"]
+        print(f"  clip 'mode {k}': SAM score {x['score']:.2f}, ({m.p0[0]:.0f},{m.p0[1]:.0f})-({m.p1[0]:.0f},{m.p1[1]:.0f}); "
+              f"{L['status']} f0 {L['f0_hz']:.3f} Hz, modes {[(r['n'], round(r['f_hz'], 2)) for r in L['modes']]}")
+
 # 2. MIT guitar, 600 fps (EVM SIGGRAPH 2012): low E = 82.41 Hz, A = 110 Hz. Parallel line trackers across the strings.
 print("== MIT guitar (600 fps)")
 v = f"{D}/mit_riesz_phase_evm_strings/guitar_riesz.avi"

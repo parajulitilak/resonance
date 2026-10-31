@@ -23,7 +23,7 @@ Built with Muse Spark Open, Muse Spark and SAM 3.1 (Meta). Screening tool: it do
 | Timing, tracking, shake removal, spectrum, verifiers, tension | working; synthetic bench: 5/5 ropes within 0.02% at 240 fps, all refused at 30 fps |
 | Inspection agent + independent verifier + approval | working on Muse Spark Open (Baseten) |
 | Field mode (sag, sway frequency) | working on a synthetic footbridge |
-| SAM 3.1 member detection | on-device (MLX) backend with mask → axis fitting, tested offline with stub masks; Meta Model API client written against the documented wire format; neither run live yet |
+| SAM 3.1 member detection | **on-device (MLX, Apple silicon): working**, 2–8 s per prompt; robust mask → centre-line fit, duplicates merged; finds the hangers of a Nepal footbridge and the wind-tunnel cable model, and the measurement from its member matches the hand-placed one. Meta Model API client written against the documented wire format, not yet run live |
 | Real phone footage | not yet tested |
 
 ## Validation on real footage (independent ground truth)
@@ -32,7 +32,7 @@ Built with Muse Spark Open, Muse Spark and SAM 3.1 (Meta). Screening tool: it do
 |---|---|---|
 | Cello G string, 7000 fps, two takes (Mores & Plath 2018, CC BY 4.0) | T = m v² = 108.8 N (6.15 g/m, 133 m/s), f0 ≈ 98 Hz | high bow force: verified 18-rung ladder, f0 96.51 Hz, **T = 105.9 ± 2.6 N (−2.6%)**; low bow force: 16 rungs, f0 96.64 Hz, **T = 106.2 ± 2.6 N (−2.4%)**; takes agree within 0.3% |
 | Oak tree sway, 30 fps (Ammatelli et al. 2023, CC BY 4.0) | accelerometer 0.23–0.24 Hz | 0.234 Hz (sideways), 0.245 Hz (vertical) |
-| Bridge-cable model in a wind tunnel, 30 fps (Trush et al., Zenodo 15655246, CC BY 4.0) | accelerometers: f1 ≈ 5 Hz (free decay 5.07 Hz); mode-2 lock-in 9.55 Hz | clip "mode 1": mode 1 by shape, f0 4.96 Hz; clip "mode 2": mode 2 by shape at **9.57 Hz** (+0.2%); clips "mode 3/4": **refused** (aliased at 30 fps) |
+| Bridge-cable model in a wind tunnel, 30 fps (Trush et al., Zenodo 15655246, CC BY 4.0) | accelerometers: f1 ≈ 5 Hz (free decay 5.07 Hz); mode-2 lock-in 9.55 Hz | clip "mode 1": mode 1 by shape, f0 4.96 Hz; clip "mode 2": mode 2 by shape at **9.57 Hz** (+0.2%); clips "mode 3/4": **refused** (aliased at 30 fps); with the member placed by **SAM 3.1** ("horizontal bar", score 0.87) instead of by hand: identical (4.961 Hz mode 1; 9.57 Hz mode 2) |
 | Shaking-table structure, free decay, 62 fps (Mendeley njhcj2kphr, CC BY 4.0) | laser 4.8467 Hz | **4.832 Hz** (−0.3%) |
 | High-speed guitar, 600 fps (MIT EVM) | E2 82.41 Hz, A2 110 Hz | 81.0 / 108.5 Hz (−1.7% / −1.4%) by spectrum; tool refuses to certify (0.5 s clip, partial strings, no ladder) |
 | Footbridge with runners crossing, 24 fps (Pexels) | not measurement-grade | **refused**: people pass in front of the tracked deck |
