@@ -101,6 +101,12 @@ def _grounded(value, numbers: list[float], rel: float = 0.25) -> bool:
     return value is not None and value > 0 and any(abs(value - n) <= rel * n for n in numbers if n > 0)
 
 
+def _same_line(a: dict, b: dict, tol: float = 25.0) -> bool:
+    """Two candidates are the same cable if both ends match within `tol` px (in either order)."""
+    d = lambda p, q: ((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2) ** 0.5  # noqa: E731
+    return (d(a["p0"], b["p0"]) < tol and d(a["p1"], b["p1"]) < tol) or (d(a["p0"], b["p1"]) < tol and d(a["p1"], b["p0"]) < tol)
+
+
 def _summary_of_check(c: dict) -> dict:
     return {"status": c.get("status"), "summary": c.get("summary"),
             "checks": [{"check": x["key"], "status": x["status"], "text": x["text"]} for x in c.get("checks", [])]}
@@ -128,6 +134,10 @@ def run_autopilot(tools: Toolbox, provider: str = "baseten", max_turns: int = 14
             found = tools.find(prompt)
             out = []
             for c in found:
+                same = next((k for k, o in tools.candidates.items() if _same_line(o, c)), None)
+                if same:  # another prompt found a cable we already have: keep one id (and its review)
+                    out.append({"id": same, "same_as_earlier": True})
+                    continue
                 cid = f"c{len(tools.candidates) + 1}"
                 tools.candidates[cid] = {**c, "prompt": prompt}
                 out.append({"id": cid, "score": round(float(c.get("score", 0)), 2),

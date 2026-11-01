@@ -78,3 +78,13 @@ def test_result_points_at_the_run_with_a_result(monkeypatch):
                                               ("measure", {"ids": ["c1"]}), ("measure", {"ids": ["c2"]})]))
     out = ap.run_autopilot(tb)
     assert out["run"] == "r1" and out["runs"] == ["r1", "r2"]
+
+
+def test_same_cable_from_two_prompts_keeps_one_id(monkeypatch):
+    cands = {"a": [{"p0": [0, 0], "p1": [0, 300], "score": 0.6}], "b": [{"p0": [3, 299], "p1": [1, 2], "score": 0.7},
+                                                                    {"p0": [90, 0], "p1": [90, 300], "score": 0.5}]}
+    tb = ap.Toolbox(check=lambda: {}, find=lambda p: cands[p], review=lambda c: [], measure=lambda m: {}, notes="")
+    monkeypatch.setattr(ap, "chat", scripted([("find_cables", {"prompt": "a"}), ("find_cables", {"prompt": "b"})]))
+    out = ap.run_autopilot(tb)
+    second = [s for s in out["steps"] if s["tool"] == "find_cables"][1]["result"]["candidates"]
+    assert second[0] == {"id": "c1", "same_as_earlier": True} and second[1]["id"] == "c2"
