@@ -180,9 +180,12 @@ def fit_harmonics(pk: list[Peak], fs: float, tol: float = 0.025, max_n: int = 24
     frame rate, and only a prior or a second take at another frame rate rules that out.
     """
     nyq = fs / 2
+    edge = [p for p in pk if p.f >= 0.92 * nyq]
     pk = [p for p in pk if p.f < 0.92 * nyq]  # peaks at the Nyquist edge can't be told from folded ones
     if not pk:
-        return HarmonicFit(float("nan"), 0.0, ok=False, reasons=["no peaks above the noise floor"])
+        return HarmonicFit(float("nan"), 0.0, ok=False, reasons=[
+            f"the only peaks lie at the Nyquist edge (≥ {0.92 * nyq:.1f} Hz at {fs:.0f} fps), where a real frequency "
+            "cannot be told from a folded one: film at a higher frame rate" if edge else "no peaks above the noise floor"])
     total = sum(p.power for p in pk)
     floor_sigma = 0.05 / duration if duration else 0.0
     best: HarmonicFit | None = None
