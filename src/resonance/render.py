@@ -94,7 +94,7 @@ def running_locks(tr: Tracking, report: dict, every_s: float = 0.2) -> dict:
 
 def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: float = 0.25,
                 out_fps: float = 30.0, magnify: float = 25.0, f_max: float | None = None,
-                title: str = "RESONANCE", subtitle: str = "cable tension from a phone video") -> Path:
+                title: str = "RESONANCE", subtitle: str = "cable vibration and tension from video") -> Path:
     """`speed` < 1 plays in slow motion (0.25 = 4x slower than real time). Every state shown is computed
     from the frames seen so far (see `running_locks`)."""
     out = Path(out)

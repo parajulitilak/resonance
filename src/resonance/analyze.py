@@ -266,12 +266,16 @@ def save(report: dict, out_dir: str | Path, log: str | Path = "out/runs.jsonl") 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     report.setdefault("code_version", _commit())
+    video = report.get("video")
+    sha = report.get("video_sha256")
+    if sha is None and video and Path(video).exists():  # in the report, so an approval hash covers the source clip
+        h = hashlib.sha256()
+        with open(video, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        sha = report["video_sha256"] = h.hexdigest()
     p = out / "report.json"
     p.write_text(json.dumps(report, indent=2, default=float))
-    video = report.get("video")
-    sha = None
-    if video and Path(video).exists() and Path(video).stat().st_size < 2_000_000_000:
-        sha = hashlib.sha256(Path(video).read_bytes()).hexdigest()
     Path(log).parent.mkdir(parents=True, exist_ok=True)
     with open(log, "a") as f:
         for m in report.get("members", []):

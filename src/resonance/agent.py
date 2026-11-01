@@ -27,7 +27,7 @@ ANY_NUMBER_UNIT = re.compile(r"\d[\d.,]*\s*(?:k?N\b|newtons?\b|kilonewtons?\b|Hz
 NEGATED_PROVISIONAL = re.compile(r"\b(not|non)[\s-]+provisional", re.I)
 
 INSPECTOR_SYSTEM = """You are Resonance's inspection agent. You review vibration measurements of cables, \
-ropes or bridge hangers taken from a phone video and prepare a report for a human engineer.
+ropes or bridge hangers taken from video and prepare a report for a human engineer.
 
 Rules:
 1. Use only numbers returned by tools. Write statements in plain language for an engineer (no field names \

@@ -1,6 +1,6 @@
 # Resonance
 
-Measure cable tension and vibration from a phone video, and refuse, with the reason, whenever the physics does not check out.
+Measure cable tension and vibration from video, and refuse, with the reason, whenever the physics does not check out. Built for phone slow motion; so far tested on public laboratory and stock recordings and on synthetic clips with known answers (see Validation).
 
 **Live demo:** _link added after deployment_ · **3-minute video:** _link added at submission_
 
