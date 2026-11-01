@@ -11,7 +11,7 @@ Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026). Every
 | Model | Where it runs | Job |
 |---|---|---|
 | **SAM 3.1** | on the laptop through MLX (Apple silicon, no network, which matters at a remote bridge), or the Meta Model API | finds every cable from a noun phrase; each mask becomes a centre line of virtual sensors |
-| **Muse Spark Open** | Baseten | three separate jobs: **(1)** looks at the frame with each SAM candidate highlighted and rejects what is not a tensioned member; **(2)** the inspection agent that writes the report from tool calls only; **(3)** a separate call, given only the evidence and the field notes, that checks every claim and fails closed |
+| **Muse Spark Open** | Baseten | four separate jobs: **(1)** looks at the frame with each SAM candidate highlighted and rejects what is not a tensioned member; **(2)** the inspection agent that writes the report from tool calls only; **(3)** a separate call, given only the evidence and the field notes, that checks every claim (and the summary) and fails closed; **(4)** the **field assistant**, an agent that runs the whole measurement itself: it checks the clip, chooses SAM prompts and tries others when one finds nothing, has the candidates reviewed, measures the confirmed ones and stops with re-shoot advice when the physics refuses. Code keeps it inside the gates: it cannot measure a candidate the review rejected, and a prior, length or mass it passes is dropped unless the field notes contain that number in the right unit. |
 
 ```mermaid
 flowchart LR
@@ -43,6 +43,7 @@ flowchart LR
 | Inspection agent + independent verifier + approval | working on Muse Spark Open (Baseten) |
 | Field mode (sag, sway frequency) | working on a synthetic footbridge |
 | SAM 3.1 member detection | **on-device (MLX, Apple silicon): working**, 2–8 s per prompt; robust mask → centre-line fit, duplicates merged; finds the hangers of a Nepal footbridge and the wind-tunnel cable model, and the measurement from its member matches the hand-placed one. Meta Model API client written against the documented wire format, not yet run live |
+| Field assistant (Muse Spark Open agent driving the pipeline) | working: on the wind-tunnel clip it tried several prompts, had candidates reviewed, measured the confirmed cable (mode 2 at 9.57 Hz, provisional) and reported; on the walking-camera footbridge it stopped at the clip check with re-shoot advice |
 | Visual review of candidates (Muse Spark Open, image input) | working: on the wind-tunnel clip it rejects the base frame and floor leads SAM proposed, and confirms the cable model when given the site notes; fails closed to "unreviewed" |
 | Real phone footage | not yet tested |
 
