@@ -113,9 +113,11 @@
       <input id="concept" value="rope" style="width:130px" title="noun phrase for SAM 3.1">
       <button id="anchorBtn" class="ghost" disabled>Mark static anchor</button>
     </div>
+    <input id="notes" placeholder="What was filmed? e.g. hangers of a suspension footbridge, steel wire ropes" style="width:100%;margin-bottom:10px">
     <p class="muted">Or click the two ends of each cable on the frame. Length, mass per metre and a rough tension range
       unlock tension; without them you still get frequencies and change detection.</p>
-    <table id="members"><thead><tr><th>Cable</th><th>L (m)</th><th>m (kg/m)</th><th>T range (N)</th><th></th></tr></thead><tbody></tbody></table>
+    <table id="members"><thead><tr><th></th><th>Cable</th><th>L (m)</th><th>m (kg/m)</th><th>T range (N)</th><th></th></tr></thead><tbody></tbody></table>
+    <div id="reviewinfo" class="muted" style="margin-top:6px"></div>
     <div class="row" style="margin-top:14px">
       <button id="analyze" disabled>Measure</button>
       <span id="anchorInfo" class="muted"></span>
@@ -168,6 +170,7 @@ function draw(status = {}) {
   const k = c.width / vw, g = c.getContext('2d');
   g.clearRect(0, 0, c.width, c.height); g.lineWidth = 3; g.font = '600 14px -apple-system';
   members.forEach(m => {
+    g.globalAlpha = m.keep === false ? 0.35 : 1;
     if (m.outline && m.outline.length > 2) {  // the mask SAM 3.1 returned
       g.fillStyle = 'rgba(86,180,233,.28)'; g.beginPath();
       m.outline.forEach(([x, y], i) => i ? g.lineTo(x*k, y*k) : g.moveTo(x*k, y*k)); g.closePath(); g.fill();
@@ -176,6 +179,7 @@ function draw(status = {}) {
     g.beginPath(); g.moveTo(m.p0[0]*k, m.p0[1]*k); g.lineTo(m.p1[0]*k, m.p1[1]*k); g.stroke();
     g.fillStyle = g.strokeStyle; g.fillText(m.name, m.p0[0]*k + 6, m.p0[1]*k + 16);
   });
+  g.globalAlpha = 1;
   if (pending) { g.fillStyle = COLORS.none; g.beginPath(); g.arc(pending[0]*k, pending[1]*k, 5, 0, 7); g.fill(); }
   if (anchor && anchor.length === 4) { g.strokeStyle = '#e8ecf2'; g.setLineDash([5,4]);
     g.strokeRect(anchor[0]*k, anchor[1]*k, (anchor[2]-anchor[0])*k, (anchor[3]-anchor[1])*k); g.setLineDash([]); }
@@ -185,7 +189,11 @@ function renderMembers() {
   const tb = $('#members tbody'); tb.innerHTML = '';
   members.forEach((m, i) => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td><input value="${esc(m.name)}" data-k="name">${m.score != null ? `<div class="muted" style="font-size:11.5px">SAM ${m.score.toFixed(2)}</div>` : ''}</td>
+    const rv = m.review, tick = m.keep !== false;
+    tr.innerHTML = `<td><input type="checkbox" data-keep ${tick ? 'checked' : ''} title="measure this member"></td>
+      <td><input value="${esc(m.name)}" data-k="name">${m.score != null ? `<div class="muted" style="font-size:11.5px">SAM ${m.score.toFixed(2)}</div>` : ''}
+        ${rv ? `<div style="font-size:11.5px;color:${rv.verdict === 'confirmed' ? 'var(--ok)' : rv.verdict === 'rejected' ? 'var(--bad)' : 'var(--dim)'}"
+          title="${esc(rv.reason)}">${rv.verdict === 'confirmed' ? '✓' : rv.verdict === 'rejected' ? '✗' : '?'} ${esc(rv.what || rv.verdict)}</div>` : ''}</td>
       <td><input value="${m.length_m ?? ''}" data-k="length_m" placeholder="1.80"></td>
       <td><input value="${m.mass_per_m ?? ''}" data-k="mass_per_m" placeholder="0.022"></td>
       <td><input value="${m.tension_range ? m.tension_range.join('-') : ''}" data-k="tension_range" placeholder="5-300"></td>
@@ -198,9 +206,10 @@ function renderMembers() {
       draw();
     });
     tr.querySelector('[data-del]').onclick = () => { members.splice(i, 1); renderMembers(); draw(); };
+    tr.querySelector('[data-keep]').onchange = e => { m.keep = e.target.checked; renderMembers(); draw(); };
     tb.appendChild(tr);
   });
-  $('#analyze').disabled = !members.length;
+  $('#analyze').disabled = !members.some(m => m.keep !== false);
 }
 
 async function upload(file) {
@@ -251,12 +260,29 @@ $('#detect').onclick = async () => {
   $('#status').textContent = `${j.backend}: found ${found.length} × "${$('#concept').value}".`;
   members = [];  // reveal SAM's masks one cable at a time
   for (const m of found) { members.push(m); renderMembers(); draw(); await new Promise(r => setTimeout(r, 350)); }
+  reviewMembers();
 };
+
+async function reviewMembers() {
+  if (!members.length) return;
+  $('#reviewinfo').textContent = `Muse Spark Open is looking at each candidate: is it really a tensioned member?`;
+  const j = await (await fetch('/api/review', {method:'POST', body: JSON.stringify({video, context: $('#notes').value,
+    members: members.map(m => ({name: m.name, p0: m.p0, p1: m.p1}))})})).json();
+  if (j.error) { $('#reviewinfo').textContent = 'Visual review unavailable: ' + j.error; return; }
+  j.reviews.forEach(r => { const m = members.find(x => x.name === r.name); if (!m) return;
+    m.review = r; if (r.verdict === 'rejected') m.keep = false; });
+  const n = k => j.reviews.filter(r => r.verdict === k).length;
+  $('#reviewinfo').textContent = `Muse Spark Open: ${n('confirmed')} confirmed, ${n('rejected')} rejected (unticked; tick to keep), ` +
+    `${n('unreviewed')} not reviewed. Hover a verdict for the reason.`;
+  renderMembers(); draw();
+}
 
 const STAGES = {queued:5, tracking:30, analysing:60, rendering:80, done:100, error:100};
 $('#analyze').onclick = async () => {
   $('#analyze').disabled = true; $('#results').hidden = true; $('#agentsec').hidden = true;
-  const r = await fetch('/api/analyze', {method:'POST', body: JSON.stringify({video, members, anchor: anchor && anchor.length === 4 ? anchor : null})});
+  const r = await fetch('/api/analyze', {method:'POST', body: JSON.stringify({video, members: members.filter(m => m.keep !== false),
+    anchor: anchor && anchor.length === 4 ? anchor : null, site_notes: $('#notes').value})});
+  if (!$('#context').value) $('#context').value = $('#notes').value;
   job = (await r.json()).job; report = null; history.replaceState(null, '', '?run=' + job); poll();
 };
 
@@ -411,6 +437,7 @@ if (params.get('video') && !params.get('run')) {
     $('#clipinfo').textContent = `${video} · ${vw}×${vh}`; draw(); };
   $('#frame').src = '/api/frame?video=' + video; $('#stage').hidden = false;
   $('#detect').disabled = false; $('#anchorBtn').disabled = false; renderMembers(); checkClip();
+  if (params.get('notes')) $('#notes').value = params.get('notes');
   if (params.get('detect')) { $('#concept').value = params.get('detect'); $('#detect').click(); }
 }
 if (params.get('run')) {

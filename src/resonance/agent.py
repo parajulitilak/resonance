@@ -46,7 +46,10 @@ its uncertainty (for example "tension down 18% ± 2% since baseline"), flagging 
 7. Flags are optional, at most one per member. Raise one only for a real finding (an outlier, a disagreement with a reference or \
 design value, a quality problem); never as a placeholder.
 8. Keep statements short and factual: one clean sentence or two, no self-corrections, no question marks. \
-Call submit_report exactly once, at the end."""
+Call submit_report exactly once, at the end.
+9. A member may carry `visual_review` (Muse Spark Open looked at the frame: is this a tensioned member, are both \
+supports in view). If the verdict is not "confirmed", or both supports are not visible, say in the statement that \
+the identification of the member is uncertain."""
 
 TOOLS = [
     {"type": "function", "function": {
@@ -138,8 +141,8 @@ def run_inspector(report: dict, context: str, mode: str = "bench", provider: str
         if name == "list_members":
             return [_member_summary(m) for m in report["members"]]
         if name == "get_member":
-            m = by.get(args.get("name"))
-            return m if m else {"error": f"no member {args.get('name')!r}"}
+            m = by.get(args.get("name"))  # the plotted spectrum is for people; the peaks carry the evidence
+            return {k: v for k, v in m.items() if k != "spectrum"} if m else {"error": f"no member {args.get('name')!r}"}
         if name == "compare_members":
             return compare(report)
         if name == "changes_since_baseline":
@@ -279,7 +282,8 @@ def run_verifier(report: dict, actions: dict, provider: str = "baseten", raw_sin
         return []
     evidence = {"timing": report["timing"],
                 "members": {m["name"]: {"peaks": m["peaks"], "ladder": m["ladder"], "tension": m.get("tension"),
-                                        "quality": m["quality"]} for m in report["members"]}}
+                                        "quality": m["quality"], "visual_review": m.get("visual_review")}
+                            for m in report["members"]}}
     if baseline:
         from .fingerprint import diff
         evidence["changes_since_baseline"] = diff(baseline, report)["members"]

@@ -80,6 +80,12 @@ def _run_job(job_id: str, video: Path, spec: dict) -> None:
         job.update(stage="analysing")
         rep = analyze_tracking(tr)
         rep["video"] = str(video)
+        reviews = {m.get("name"): m["review"] for m in spec["members"] if m.get("review")}
+        for e in rep["members"]:  # the visual review travels with the member, so the inspector sees it
+            if e["name"] in reviews:
+                e["visual_review"] = reviews[e["name"]]
+        if spec.get("site_notes"):
+            rep["site_notes"] = spec["site_notes"][:1000]
         save(rep, out)
         job.update(stage="rendering", report=rep)
         from .render import render_hero
@@ -220,6 +226,15 @@ class Handler(BaseHTTPRequestHandler):
                     {"name": m.name, "p0": [float(v) for v in m.p0], "p1": [float(v) for v in m.p1],
                      "half_width": m.half_width, **{k: v for k, v in info.get(m.name, {}).items() if k != "name"}}
                     for m in ms]})
+            except Exception as e:  # noqa: BLE001
+                return _json(self, {"error": f"{type(e).__name__}: {e}"}, 502)
+        if u.path == "/api/review":
+            try:
+                from .review import review
+                from .video import read_frames
+                frame = next(iter(read_frames(str(UPLOADS / Path(body["video"]).name))))
+                ms = [Member(m["name"], tuple(m["p0"]), tuple(m["p1"])) for m in body["members"]]
+                return _json(self, {"reviews": review(frame, ms, context=body.get("context", ""))})
             except Exception as e:  # noqa: BLE001
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 502)
         if u.path.startswith("/api/jobs/") and u.path.endswith("/inspect"):
