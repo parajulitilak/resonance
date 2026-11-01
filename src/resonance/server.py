@@ -79,6 +79,11 @@ def _samples() -> list[dict]:
     return [s for s in json.loads(f.read_text()) if (SAMPLES / s["file"]).exists()] if f.exists() else []
 
 
+def _replays() -> list[dict]:
+    f = SAMPLES / "replays.json"
+    return [r for r in json.loads(f.read_text()) if (RUNS / r["id"] / "report.json").exists()] if f.exists() else []
+
+
 def _json(h: BaseHTTPRequestHandler, obj, code: int = 200) -> None:
     body = json.dumps(obj, default=float).encode()
     h.send_response(code)
@@ -156,6 +161,9 @@ def _run_inspect(job_id: str, context: str, mode: str, baseline_id: str | None =
         rep = json.loads((RUNS / job_id / "report.json").read_text())
         base = _load_run(baseline_id)["report"] if baseline_id and _load_run(baseline_id) else None
         md = inspect(rep, context, RUNS / job_id, mode=mode, log=lambda *_: None, baseline=base)
+        if base:  # remembered, so the replay can show what changed
+            (RUNS / job_id / "baseline.txt").write_text(Path(baseline_id).name)
+            job["baseline"] = Path(baseline_id).name
         job.update(inspect_stage="done", inspection=md.read_text(),
                    agent=json.loads((RUNS / job_id / "agent.json").read_text()))
     except Exception as e:  # noqa: BLE001
@@ -178,6 +186,8 @@ def _load_run(job_id: str) -> dict | None:
         job["inspection"] = (d / "inspection.md").read_text() if (d / "inspection.md").exists() else ""
     if (d / "approval.json").exists():
         job["approved"] = json.loads((d / "approval.json").read_text())
+    if (d / "baseline.txt").exists():
+        job["baseline"] = (d / "baseline.txt").read_text().strip()
     JOBS[job_id] = job
     return job
 
@@ -211,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 500)
         if u.path == "/api/samples":
-            return _json(self, {"samples": _samples()})
+            return _json(self, {"samples": _samples(), "replays": _replays()})
         if u.path == "/api/runs":
             runs = sorted((p.name for p in RUNS.glob("*") if (p / "report.json").exists()), reverse=True)
             return _json(self, {"runs": runs[:50]})
@@ -284,7 +294,7 @@ class Handler(BaseHTTPRequestHandler):
                 concept = body.get("concept", "rope")
                 cached = _sam_cached(vid, concept)
                 if cached:
-                    cached["backend"] = cached.get("backend", "SAM 3.1") + " (result saved from an earlier run)"
+                    cached["backend"] = "SAM 3.1 (run earlier on-device for this clip; result saved)"
                     return _json(self, cached)
                 frame = next(iter(read_frames(str(vid))))
                 if sam_local.available():  # on-device SAM 3.1 (MLX): real masks

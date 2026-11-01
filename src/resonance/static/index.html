@@ -86,6 +86,7 @@
   <p>Cable tension from a phone video · SAM 3.1 places the sensors · physics checks itself · an engineer signs</p>
   <p style="margin-left:auto;font-size:12px">Built with Muse Spark Open · SAM 3.1 · screening only, not a safety certificate</p>
 </header>
+<div id="replays" style="padding:0 40px;font-size:14px"></div>
 <main>
   <section id="clipsec">
     <h2><span class="step">1</span>Clip</h2>
@@ -229,6 +230,8 @@ async function upload(file) {
 
 async function loadSamples() {
   const j = await (await fetch('/api/samples')).json();
+  if (j.replays && j.replays.length) $('#replays').innerHTML = '<span class="muted">Finished runs, with the agent report:</span> ' +
+    j.replays.map(r => `<a href="?run=${encodeURIComponent(r.id)}">${esc(r.title)}</a>`).join(' · ');
   if (!j.samples.length) return;
   $('#samples').innerHTML = '<span class="muted">Or try a recorded clip:</span>' +
     j.samples.map(s => `<button class="ghost" data-sample="${esc(s.id)}" title="${esc(s.credit)}">${esc(s.title)}</button>`).join('');
@@ -322,7 +325,7 @@ async function poll() {
   $('#bar').style.width = (STAGES[j.stage] || 10) + '%';
   $('#status').textContent = j.stage === 'error' ? 'Error: ' + j.error : 'Stage: ' + j.stage;
   if (j.report && !report) showReport(j.report);
-  if (j.stage === 'done') { if (j.hero) $('#hero').poster = j.hero.replace('.mp4', '.jpg'); $('#hero').src = j.hero; $('#analyze').disabled = false; showAgent(j); return; }
+  if (j.stage === 'done') { if (j.hero) { $('#hero').poster = j.hero.replace('.mp4', '.jpg'); $('#hero').src = j.hero; } $('#analyze').disabled = false; showAgent(j); return; }
   if (j.stage === 'error') { $('#analyze').disabled = false; return; }
   setTimeout(poll, 800);
 }
@@ -382,10 +385,11 @@ function showReport(rep) {
   loadRuns();
 }
 
-async function loadRuns() {
+async function loadRuns(autoBaseline) {
   const j = await (await fetch('/api/runs')).json();
   $('#baseline').innerHTML = '<option value="">— baseline —</option>' +
     j.runs.filter(r => r !== job).map(r => `<option>${r}</option>`).join('');
+  if (autoBaseline && j.runs.includes(autoBaseline)) { $('#baseline').value = autoBaseline; $('#compare').click(); }
 }
 $('#compare').onclick = async () => {
   const b = $('#baseline').value; if (!b) return;
@@ -481,7 +485,8 @@ if (params.get('run')) {
   fetch('/api/jobs/' + job).then(r => r.json()).then(j => {
     if (j.error) return;
     $('#clipsec').hidden = true; $('#cablesec').hidden = true;
-    showReport(j.report); if (j.hero) $('#hero').poster = j.hero.replace('.mp4', '.jpg'); $('#hero').src = j.hero; showAgent(j);
+    showReport(j.report); if (j.hero) { $('#hero').poster = j.hero.replace('.mp4', '.jpg'); $('#hero').src = j.hero; } showAgent(j);
+    if (j.baseline) loadRuns(j.baseline);
   });
 }
 window.onresize = () => video && draw();
