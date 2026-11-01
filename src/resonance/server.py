@@ -6,7 +6,10 @@ and the page polls for status.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import shutil
 import subprocess
 import threading
 import time
@@ -24,8 +27,56 @@ from .video import probe
 ROOT = Path.cwd()
 UPLOADS = ROOT / "media" / "uploads"
 RUNS = ROOT / "out" / "runs"
+SAM_CACHE = ROOT / "media" / "sam_cache"
 STATIC = Path(__file__).parent / "static"
+# Hosted demo: sample clips (with a samples.json and precomputed SAM results) and finished runs to replay
+SAMPLES = Path(os.environ.get("RESONANCE_SAMPLES", ROOT / "samples"))
+PUBLIC = os.environ.get("RESONANCE_PUBLIC") == "1"   # rate limits and an upload cap for a public URL
+MAX_UPLOAD = 400 << 20
+LLM_PER_HOUR = 40
 JOBS: dict[str, dict] = {}
+_llm_calls: list[float] = []
+_llm_lock = threading.Lock()
+
+
+def _llm_allowed() -> bool:
+    """Public deployments share one model key: cap the model calls per hour."""
+    if not PUBLIC:
+        return True
+    with _llm_lock:
+        now = time.time()
+        _llm_calls[:] = [t for t in _llm_calls if now - t < 3600]
+        if len(_llm_calls) >= LLM_PER_HOUR:
+            return False
+        _llm_calls.append(now)
+        return True
+
+
+def _sha(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()[:24]
+
+
+def _sam_cached(video: Path, concept: str) -> dict | None:
+    key = f"{_sha(video)}_{hashlib.sha256(concept.strip().lower().encode()).hexdigest()[:8]}.json"
+    for d in (SAM_CACHE, SAMPLES / "sam_cache"):
+        if (d / key).exists():
+            return json.loads((d / key).read_text())
+    return None
+
+
+def _sam_store(video: Path, concept: str, result: dict) -> None:
+    SAM_CACHE.mkdir(parents=True, exist_ok=True)
+    key = f"{_sha(video)}_{hashlib.sha256(concept.strip().lower().encode()).hexdigest()[:8]}.json"
+    (SAM_CACHE / key).write_text(json.dumps(result))
+
+
+def _samples() -> list[dict]:
+    f = SAMPLES / "samples.json"
+    return [s for s in json.loads(f.read_text()) if (SAMPLES / s["file"]).exists()] if f.exists() else []
 
 
 def _json(h: BaseHTTPRequestHandler, obj, code: int = 200) -> None:
@@ -79,7 +130,8 @@ def _run_job(job_id: str, video: Path, spec: dict) -> None:
         anchor = tuple(spec["anchor"]) if spec.get("anchor") else None
         tr = track(str(video), members, anchor=anchor, capture_fps=spec.get("capture_fps"))
         job.update(stage="analysing")
-        rep = analyze_tracking(tr)
+        from .analyze import picture_motion
+        rep = analyze_tracking(tr, picture_motion_px=None if anchor else picture_motion(str(video), members))
         rep["video"] = str(video)
         reviews = {m.get("name"): m["review"] for m in spec["members"] if m.get("review")}
         for e in rep["members"]:  # the visual review travels with the member, so the inspector sees it
@@ -158,6 +210,8 @@ class Handler(BaseHTTPRequestHandler):
                 return _json(self, check(str(vid), capture_fps=fps))
             except Exception as e:  # noqa: BLE001
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 500)
+        if u.path == "/api/samples":
+            return _json(self, {"samples": _samples()})
         if u.path == "/api/runs":
             runs = sorted((p.name for p in RUNS.glob("*") if (p / "report.json").exists()), reverse=True)
             return _json(self, {"runs": runs[:50]})
@@ -188,6 +242,8 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         n = int(self.headers.get("Content-Length", "0"))
         if u.path == "/api/upload":
+            if PUBLIC and n > MAX_UPLOAD:
+                return _json(self, {"error": f"clip larger than {MAX_UPLOAD >> 20} MB: trim it to 10 s"}, 413)
             UPLOADS.mkdir(parents=True, exist_ok=True)
             name = f"{uuid.uuid4().hex[:10]}.mp4" if not u.query else \
                 f"{uuid.uuid4().hex[:6]}-{Path(parse_qs(u.query).get('name', ['clip.mp4'])[0]).stem[:40]}.mp4"
@@ -203,6 +259,17 @@ class Handler(BaseHTTPRequestHandler):
             info = probe(str(dest))
             return _json(self, {"video": name, "width": info.width, "height": info.height, "fps": info.fps})
         body = json.loads(self.rfile.read(n) or b"{}")
+        if u.path == "/api/sample":
+            s = next((x for x in _samples() if x["id"] == body.get("id")), None)
+            if not s:
+                return _json(self, {"error": "unknown sample"}, 404)
+            UPLOADS.mkdir(parents=True, exist_ok=True)
+            dest = UPLOADS / f"sample-{s['id']}.mp4"
+            if not dest.exists():
+                shutil.copyfile(SAMPLES / s["file"], dest)
+            info = probe(str(dest))
+            return _json(self, {"video": dest.name, "width": info.width, "height": info.height, "fps": info.fps,
+                                "sample": s})
         if u.path == "/api/analyze":
             video = UPLOADS / Path(body["video"]).name
             job_id = time.strftime("%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
@@ -214,22 +281,34 @@ class Handler(BaseHTTPRequestHandler):
                 from . import sam_local
                 from .video import read_frames
                 vid = UPLOADS / Path(body["video"]).name
-                frame = next(iter(read_frames(str(vid))))
                 concept = body.get("concept", "rope")
+                cached = _sam_cached(vid, concept)
+                if cached:
+                    cached["backend"] = cached.get("backend", "SAM 3.1") + " (result saved from an earlier run)"
+                    return _json(self, cached)
+                frame = next(iter(read_frames(str(vid))))
                 if sam_local.available():  # on-device SAM 3.1 (MLX): real masks
                     ms, extra = sam_local.find_members(frame, concept)
                     backend = "SAM 3.1 on this computer (MLX)"
-                else:  # Meta Model API: boxes
+                elif os.environ.get("MODEL_API_KEY"):  # Meta Model API: boxes
                     from .sam import find_members
                     ms, extra, backend = find_members(frame, concept), [], "SAM 3.1 via Meta Model API"
+                else:
+                    return _json(self, {"error": "SAM 3.1 runs on-device (Apple silicon) in the field kit and is not "
+                                                 "available on this server; it was run in advance for the sample "
+                                                 "clips. Click the two ends of each cable instead."}, 503)
                 info = {e["name"]: e for e in extra}
-                return _json(self, {"backend": backend, "members": [
+                result = {"backend": backend, "members": [
                     {"name": m.name, "p0": [float(v) for v in m.p0], "p1": [float(v) for v in m.p1],
                      "half_width": m.half_width, **{k: v for k, v in info.get(m.name, {}).items() if k != "name"}}
-                    for m in ms]})
+                    for m in ms]}
+                _sam_store(vid, concept, result)
+                return _json(self, result)
             except Exception as e:  # noqa: BLE001
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 502)
         if u.path == "/api/review":
+            if not _llm_allowed():
+                return _json(self, {"error": "model call limit reached for this hour on the public demo"}, 429)
             try:
                 from .review import review
                 from .video import read_frames
@@ -240,6 +319,8 @@ class Handler(BaseHTTPRequestHandler):
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 502)
         if u.path.startswith("/api/jobs/") and u.path.endswith("/inspect"):
             job_id = u.path.split("/")[3]
+            if not _llm_allowed():
+                return _json(self, {"error": "model call limit reached for this hour on the public demo"}, 429)
             _load_run(job_id)
             threading.Thread(target=_run_inspect, args=(job_id, body.get("context", ""), body.get("mode", "bench"),
                                                         body.get("baseline")), daemon=True).start()
@@ -262,6 +343,9 @@ def serve(port: int = 8765, host: str = "127.0.0.1") -> None:
     from .llm import load_env
     load_env()
     RUNS.mkdir(parents=True, exist_ok=True)
+    for d in (SAMPLES / "runs").glob("*/") if (SAMPLES / "runs").exists() else []:
+        if (d / "report.json").exists() and not (RUNS / d.name).exists():  # finished runs to replay
+            shutil.copytree(d, RUNS / d.name)
     srv = ThreadingHTTPServer((host, port), Handler)
     print(f"Resonance on http://{host}:{port}")
     if host != "127.0.0.1":

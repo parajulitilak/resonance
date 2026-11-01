@@ -167,3 +167,18 @@ def test_single_mode_identified_by_shape_and_alias_guarded():
     assert e["ladder"]["status"] == "provisional" and abs(e["ladder"]["f0_hz"] - 4.785) < 0.01
     e = run(10.5, 3, (4.0, 6.0))                         # mode 3 could be aliased at 30 fps: must refuse
     assert e["ladder"]["status"] == "refused"
+
+
+def test_picture_motion_gates_members_when_no_anchor_was_marked():
+    fs = 240.0
+    t = np.arange(1200) / fs
+    s = np.linspace(0.06, 0.94, 32)
+    disp = sum(np.sin(np.pi * n * s)[None, :] * np.sin(2 * np.pi * 8.0 * n * t)[:, None] / n for n in (1, 2, 3, 4))
+    tb = TimeBase(t=t, fps=fs, nominal_fps=fs, jitter=0.0, time_scale=1.0, source="test")
+    m = Member("rope", (100, 50), (100, 900), f0_range=(5.0, 12.0))
+    tr = Tracking(tb, [m], s, {"rope": disp}, {"rope": {}}, None, {"rope": np.ones(32)})
+    steady = analyze_tracking(tr, picture_motion_px=0.4)
+    assert steady["members"][0]["ladder"]["status"] == "verified"
+    walking = analyze_tracking(tr, picture_motion_px=30.0)
+    lad = walking["members"][0]["ladder"]
+    assert lad["status"] == "refused" and "no static anchor" in lad["reasons"][-1]

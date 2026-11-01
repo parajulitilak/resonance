@@ -16,8 +16,9 @@ from .displacement import _hann2d, phase_shift
 from .timing import frame_times
 from .video import probe, read_frames
 
-SHAKE_FAIL_PX = 5.0   # same as the camera gate in analyze
 SHAKE_WARN_PX = 1.0
+SHAKE_GATE_PX = 5.0   # the camera gate in analyze, measured there away from the marked members
+SHAKE_FAIL_PX = 30.0  # the whole picture moving this much is the camera, whatever fills the frame
 
 
 def _tags(path: str) -> dict:
@@ -38,20 +39,56 @@ def _camera(tags: dict) -> str | None:
     return " ".join(x for x in (make, model) if x) or None
 
 
-def global_shake(path: str, width: int = 256, max_frames: int = 3000) -> np.ndarray:
-    """Whole-frame shift of every frame against the first, in full-resolution pixels ([frames, 2])."""
+def global_shake(path: str, width: int = 320, max_frames: int = 3000, grid: tuple[int, int] = (4, 3),
+                 exclude: list[tuple[float, float, float, float]] | None = None) -> np.ndarray:
+    """Camera motion of every frame, in full-resolution pixels ([frames, 2]).
+
+    The frame is cut into tiles; each textured tile is matched against a keyframe by phase correlation and the
+    median shift across tiles is taken, so a cable or string moving inside a few tiles does not count as camera
+    motion while a moving camera shifts them all. When the tiles stop matching the keyframe (the view has
+    changed), the current frame becomes the new keyframe and the motion so far is carried over.
+    `exclude`: boxes (x0, y0, x1, y1, full-resolution pixels), e.g. the members being measured.
+    Returns an empty array when fewer than three textured tiles are left to judge the camera by.
+    """
     full = probe(path).width
     k = full / min(width, full)
-    shifts, ref, win = [], None, None
+    nx, ny = grid
+    pos, base, tiles = [], np.zeros(2), None
     for i, img in enumerate(read_frames(path, width=width, gray=True)):
         if i >= max_frames:
             break
         g = img.astype(np.float32)
-        if ref is None:
-            win = _hann2d(*g.shape)
-            ref = np.fft.fft2((g - g.mean()) * win)
-        shifts.append(phase_shift(ref, g, win))
-    return np.array(shifts) * k
+        if tiles is None:  # (re)key: textured tiles of this frame, away from the members
+            h, w = g.shape
+            th, tw = h // ny, w // nx
+            keep = np.ones((h, w), bool)
+            for x0, y0, x1, y1 in exclude or []:
+                keep[max(0, int(y0 / k)):max(0, int(np.ceil(y1 / k))), max(0, int(x0 / k)):max(0, int(np.ceil(x1 / k)))] = False
+            win = _hann2d(th, tw)
+            tiles = []
+            for r in range(ny):
+                for c in range(nx):
+                    sl = (slice(r * th, (r + 1) * th), slice(c * tw, (c + 1) * tw))
+                    t = g[sl]
+                    if keep[sl].mean() > 0.5 and t.std() >= 3.0:
+                        tiles.append((sl, np.fft.fft2((t - t.mean()) * win)))
+            if len(tiles) < 3:
+                return np.zeros((0, 2))
+            last = np.zeros(2)
+        shifts, quality = [], []
+        for sl, ref in tiles:
+            q: list = []
+            shifts.append(phase_shift(ref, g[sl], win, q))
+            quality.append(q[0])
+        good = [sh for sh, q in zip(shifts, quality) if q >= 0.15]
+        if len(good) < max(3, len(tiles) // 3):  # the view no longer matches: carry the motion over, re-key
+            base = base + last
+            tiles = None
+            pos.append(base.copy())
+            continue
+        last = np.median(np.array(good), axis=0)
+        pos.append(base + last)
+    return np.array(pos) * k
 
 
 def check(path: str, capture_fps: float | None = None) -> dict:
@@ -92,9 +129,11 @@ def check(path: str, capture_fps: float | None = None) -> dict:
     rms = float(np.sqrt(np.mean(np.sum((sh - sh.mean(0)) ** 2, 1)))) if len(sh) > 1 else 0.0
     add("camera", "ok" if rms <= SHAKE_WARN_PX else "warn" if rms <= SHAKE_FAIL_PX else "fail", round(rms, 2),
         f"camera steady ({rms:.1f} px RMS)" if rms <= SHAKE_WARN_PX else
-        f"picture moved {rms:.1f} px RMS: mark a static textured patch as the anchor" if rms <= SHAKE_FAIL_PX else
-        f"picture moved {rms:.0f} px RMS: brace the phone (tripod, railing) and film again; if it is the "
-        "structure that moves, mark a static anchor and the measurement will tell camera from structure")
+        f"picture moved {rms:.1f} px RMS: mark a static textured patch as the anchor" if rms <= SHAKE_GATE_PX else
+        f"picture moved {rms:.0f} px RMS: if the cable fills the view this is the cable itself, and the "
+        f"measurement re-checks the camera away from the cables you mark (refused above {SHAKE_GATE_PX:.0f} px)"
+        if rms <= SHAKE_FAIL_PX else
+        f"picture moved {rms:.0f} px RMS: the camera itself moved; brace the phone (tripod, railing) and film again")
 
     first = next(iter(read_frames(path, width=640, gray=True))).astype(np.float32)
     clipped, mean = float(np.mean(first >= 250)), float(first.mean())

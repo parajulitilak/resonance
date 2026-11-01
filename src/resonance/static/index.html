@@ -98,6 +98,7 @@
       <li>Keep something that does not move in view (tower, wall, rock): it becomes the anchor that removes camera shake.</li>
       <li>Pluck the rope once (bench) or let wind and footfall excite the bridge, and film at least 5 s.</li>
       <li>For a confirmed result film a second take at a different rate (120 fps).</li></ol></details>
+    <div id="samples" class="row" style="margin-top:10px"></div>
     <div id="clipinfo" class="muted" style="margin-top:8px"></div>
     <div id="checks" class="checks"></div>
     <div id="stage" hidden>
@@ -110,7 +111,8 @@
     <h2><span class="step">2</span>Cables</h2>
     <div class="row" style="margin-bottom:10px">
       <button id="detect" class="ghost" disabled>Find cables with SAM 3.1</button>
-      <input id="concept" value="rope" style="width:130px" title="noun phrase for SAM 3.1">
+      <input id="concept" value="rope" style="width:150px" list="concepts" title="what to look for: 'suspension cable' or 'vertical cable' for bridge hangers, 'rope' for ropes, 'horizontal bar' or 'rod' for thick lab cables">
+      <datalist id="concepts"><option value="suspension cable"><option value="vertical cable"><option value="rope"><option value="cable"><option value="horizontal bar"><option value="rod"></datalist>
       <button id="anchorBtn" class="ghost" disabled>Mark static anchor</button>
     </div>
     <input id="notes" placeholder="What was filmed? e.g. hangers of a suspension footbridge, steel wire ropes" style="width:100%;margin-bottom:10px">
@@ -160,6 +162,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const esc = t => String(t ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+let currentSample = null;
 let video = null, vw = 0, vh = 0, members = [], pending = null, anchor = null, anchorMode = false, job = null, report = null;
 const COLORS = {verified:'#26c4aa', provisional:'#e69f00', refused:'#ff6a3d', frequency:'#56b4e9', none:'#c9d1dc'};
 
@@ -219,8 +222,32 @@ async function upload(file) {
   $('#clipinfo').textContent = 'Uploading…';
   const r = await fetch('/api/upload?name=' + encodeURIComponent(file.name), {method:'POST', body:file});
   const j = await r.json();
+  if (j.error) { $('#clipinfo').textContent = j.error; return; }
+  currentSample = null;
+  openClip(j, file.name);
+}
+
+async function loadSamples() {
+  const j = await (await fetch('/api/samples')).json();
+  if (!j.samples.length) return;
+  $('#samples').innerHTML = '<span class="muted">Or try a recorded clip:</span>' +
+    j.samples.map(s => `<button class="ghost" data-sample="${esc(s.id)}" title="${esc(s.credit)}">${esc(s.title)}</button>`).join('');
+  $('#samples').querySelectorAll('[data-sample]').forEach(b => b.onclick = async () => {
+    $('#clipinfo').textContent = 'Loading sample…';
+    const r = await (await fetch('/api/sample', {method:'POST', body: JSON.stringify({id: b.dataset.sample})})).json();
+    if (r.error) { $('#clipinfo').textContent = r.error; return; }
+    currentSample = r.sample;
+    $('#concept').value = r.sample.concept || 'rope'; $('#notes').value = r.sample.notes || '';
+    $('#context').value = r.sample.context || r.sample.notes || '';
+    openClip(r, `${r.sample.title} (${r.sample.credit})`);
+    if (r.sample.members) { members = r.sample.members.map(m => ({...m})); renderMembers(); draw(); }
+  });
+}
+loadSamples();
+
+function openClip(j, label) {
   video = j.video; vw = j.width; vh = j.height; members = []; anchor = null;
-  $('#clipinfo').textContent = `${file.name} · ${j.width}×${j.height} · container says ${j.fps.toFixed(1)} fps (true timing is measured per frame)`;
+  $('#clipinfo').textContent = `${label} · ${j.width}×${j.height} · container says ${j.fps.toFixed(1)} fps (true timing is measured per frame)`;
   $('#frame').src = '/api/frame?video=' + video; $('#stage').hidden = false;
   $('#frame').onload = () => draw();
   $('#detect').disabled = false; $('#anchorBtn').disabled = false; renderMembers();
@@ -259,7 +286,8 @@ $('#detect').onclick = async () => {
   $('#status').textContent = 'Asking SAM 3.1…';
   const j = await (await fetch('/api/detect', {method:'POST', body: JSON.stringify({video, concept: $('#concept').value})})).json();
   if (j.error) { $('#status').textContent = 'SAM 3.1: ' + j.error; return; }
-  const found = j.members.map(m => ({...m, length_m:null, mass_per_m:null, tension_range:null}));
+  const found = j.members.map(m => ({...m, length_m:null, mass_per_m:null, tension_range:null,
+                                     f0_range: currentSample && currentSample.f0_range || null}));
   $('#status').textContent = `${j.backend}: found ${found.length} × "${$('#concept').value}".`;
   members = [];  // reveal SAM's masks one cable at a time
   for (const m of found) { members.push(m); renderMembers(); draw(); await new Promise(r => setTimeout(r, 350)); }
@@ -418,8 +446,9 @@ function showAgent(j) {
 
 $('#inspect').onclick = async () => {
   $('#inspect').disabled = true; $('#istatus').textContent = 'The inspection agent is working; an independent verifier will check every claim…';
-  await fetch(`/api/jobs/${job}/inspect`, {method:'POST', body: JSON.stringify({context: $('#context').value,
-    mode: $('#mode').value, baseline: $('#baseline').value || null})});
+  const started = await (await fetch(`/api/jobs/${job}/inspect`, {method:'POST', body: JSON.stringify({context: $('#context').value,
+    mode: $('#mode').value, baseline: $('#baseline').value || null})})).json();
+  if (started.error) { $('#istatus').textContent = started.error; $('#inspect').disabled = false; return; }
   const tick = async () => {
     const j = await (await fetch('/api/jobs/' + job)).json();
     if (j.inspect_stage === 'done') { $('#istatus').textContent = ''; $('#inspect').disabled = false; showAgent(j); return; }

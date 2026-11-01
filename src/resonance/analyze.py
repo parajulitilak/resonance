@@ -33,7 +33,9 @@ def _thumb(sp, pk, bins: int = 240) -> dict:
     return {"f_max_hz": float(hi), "snr_db": [round(float(x), 1) for x in out]}
 
 
-def analyze_tracking(tr: Tracking) -> dict:
+def analyze_tracking(tr: Tracking, picture_motion_px: float | None = None) -> dict:
+    """`picture_motion_px`: whole-frame motion RMS (clipcheck.global_shake), used for the camera gate when no
+    static anchor was marked."""
     tb = tr.timebase
     shake_f = _shake_peaks(tr)
     report = {
@@ -53,6 +55,11 @@ def analyze_tracking(tr: Tracking) -> dict:
     if report["shake_px"] and report["shake_px"]["rms"] > 5.0:
         camera_reason = (f"camera moved {report['shake_px']['rms']:.0f} px RMS (max {report['shake_px']['max']:.0f} px): "
                          "too much to correct; film from a tripod or rest the phone on something solid")
+    elif tr.shake is None and picture_motion_px is not None:
+        report["picture_motion_px"] = picture_motion_px
+        if picture_motion_px > 5.0:  # no anchor to correct with: the camera's own motion would look like vibration
+            camera_reason = (f"the whole picture moved {picture_motion_px:.0f} px RMS and no static anchor was marked: "
+                             "camera motion cannot be told apart from cable motion; brace the phone and film again")
     report["camera_gate"] = camera_reason
     for m in tr.members:
         w = tr.weights[m.name] if tr.weights else None
@@ -64,6 +71,10 @@ def analyze_tracking(tr: Tracking) -> dict:
             pk = [p for p in pk_all if not any(abs(p.f - f) <= 0.01 * f for f in shake_f)]
             prior = m.expected_f0()
             fit = fit_harmonics(pk, sp.fs, f0_range=prior, duration=duration)
+            gate = [r for r in (camera_reason, "frame timing changes during the clip: use the original recording"
+                                if tb.ramped else None) if r]
+            if gate:  # same gates as cable members
+                fit.ok, fit.provisional, fit.reasons = False, False, list(fit.reasons) + gate
             entry = {"name": m.name, "kind": "patch", "box": list(m.box), "direction": list(m.direction),
                      "quality": tr.quality[m.name], "prior_f0_hz": list(prior) if prior else None,
                      "peaks": [asdict(p) for p in pk],
@@ -189,10 +200,27 @@ def analyze_tracking(tr: Tracking) -> dict:
     return report
 
 
+def picture_motion(path: str, members: list[Member] | None = None) -> float:
+    """Camera motion from the whole frame, leaving out the members themselves (they are meant to move)."""
+    from .clipcheck import global_shake
+    sh = global_shake(path, exclude=[_region(m) for m in members or []])
+    return float(np.sqrt(np.mean(np.sum((sh - sh.mean(0)) ** 2, 1)))) if len(sh) > 1 else 0.0
+
+
+def _region(m: Member, pad: float = 20.0) -> tuple[float, float, float, float]:
+    if m.kind == "patch" and m.box:
+        x0, y0, x1, y1 = m.box
+    else:
+        (x0, y0), (x1, y1) = m.p0, m.p1
+        x0, x1, y0, y1 = min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)
+        pad += m.half_width
+    return x0 - pad, y0 - pad, x1 + pad, y1 + pad
+
+
 def analyze(path: str, members: list[Member], anchor=None, capture_fps: float | None = None,
             max_frames: int | None = None) -> dict:
     tr = track(path, members, anchor=anchor, capture_fps=capture_fps, max_frames=max_frames)
-    rep = analyze_tracking(tr)
+    rep = analyze_tracking(tr, picture_motion_px=None if anchor else picture_motion(path, members))
     rep["video"] = str(path)
     return rep
 
