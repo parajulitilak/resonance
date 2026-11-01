@@ -33,7 +33,8 @@ flowchart LR
 4. **Self-checks.** A taut cable rings at `f_n = n f0 sqrt(1 + B n^2)`. A result is *verified* only if the strong peaks sit on one such ladder, the fundamental's mode shape has no interior node (and the 2nd has one), the frame rate is high enough for a coarse frequency prior (the alias guard), and the frame timing is steady. Otherwise it is *provisional* (labelled, with a re-shoot request) or *refused* with the reason.
 5. **Physics.** Taut string with pinned ends: `T = 4 m L^2 f0^2`, with propagated uncertainty and a pinned/clamped bracket when end fixity matters. Members whose bending stiffness is significant (`xi < 10`) get relative comparisons only.
 6. **Agent.** An inspector agent (Muse Spark Open on Baseten; Muse Spark on the Meta Model API is a drop-in provider) writes the report from tool calls; code enforces the rules (no numbers on refused members, provisional labelled, no "safe", no absolute field tension); a separate Muse Spark Open call, given only the evidence and the field notes, verifies every claim and fails closed; an engineer signs off, bound to a hash of the evidence.
-7. **Field mode.** Main-cable sag from the fitted curvature and the sway frequency `sqrt(g / 8b)` are two independent readings of the same cable.
+7. **Field assistant (optional, one click).** A Muse Spark Open agent runs steps 2–6 itself with the same tools and gates: it checks the clip, chooses SAM prompts, has the candidates reviewed, measures only confirmed ones and stops with re-shoot advice when the physics refuses. It cannot set a prior: it may name a value written in the field notes, and code builds the band (see GATES.md).
+8. **Field mode.** Main-cable sag from the fitted curvature and the sway frequency `sqrt(g / 8b)` are two independent readings of the same cable.
 
 ## Status
 
