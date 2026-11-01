@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -31,25 +33,79 @@ SAM_CACHE = ROOT / "media" / "sam_cache"
 STATIC = Path(__file__).parent / "static"
 # Hosted demo: sample clips (with a samples.json and precomputed SAM results) and finished runs to replay
 SAMPLES = Path(os.environ.get("RESONANCE_SAMPLES", ROOT / "samples"))
-PUBLIC = os.environ.get("RESONANCE_PUBLIC") == "1"   # rate limits and an upload cap for a public URL
+PUBLIC = os.environ.get("RESONANCE_PUBLIC") == "1"   # limits for a public URL with no login
 MAX_UPLOAD = 400 << 20
-LLM_PER_HOUR = 40
+MAX_BODY = 256 << 10                 # JSON request bodies
+MODEL_CALLS_PER_HOUR = 150           # every model call (review, inspector turn, verifier batch, SAM API) counts
+MAX_MEMBERS = 40
+MAX_REVIEW = 25
+MAX_RUNNING = 2                      # analyses (and, separately, inspections) at once
+UPLOAD_QUOTA = 2 << 30               # oldest uploads are deleted beyond this (public mode)
+MAX_RUNS = 150                       # oldest visitor runs are deleted beyond this (public mode)
 JOBS: dict[str, dict] = {}
-_llm_calls: list[float] = []
-_llm_lock = threading.Lock()
+REVIEWS: dict[tuple, dict] = {}      # visual-review verdicts made by this server, never taken from a client
+SEEDED: set[str] = set()             # recorded example runs: read-only on a public server
+_calls: list[float] = []
+_lock = threading.Lock()
+_SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$")
 
 
-def _llm_allowed() -> bool:
-    """Public deployments share one model key: cap the model calls per hour."""
+def _model_call_allowed() -> bool:
+    """Public deployments share one model key: a budget of model calls per hour, charged per call."""
     if not PUBLIC:
         return True
-    with _llm_lock:
+    with _lock:
         now = time.time()
-        _llm_calls[:] = [t for t in _llm_calls if now - t < 3600]
-        if len(_llm_calls) >= LLM_PER_HOUR:
+        _calls[:] = [t for t in _calls if now - t < 3600]
+        if len(_calls) >= MODEL_CALLS_PER_HOUR:
             return False
-        _llm_calls.append(now)
+        _calls.append(now)
         return True
+
+
+def _safe(name: str | None) -> str | None:
+    """A run id or file name that cannot leave its folder."""
+    name = str(name or "")
+    return name if _SAFE.match(name) and ".." not in name else None
+
+
+def _video(name) -> Path | None:
+    n = _safe(name)
+    return UPLOADS / n if n and (UPLOADS / n).is_file() else None
+
+
+def _looks_like_video(path: Path) -> bool:
+    """Only containers phones and cameras write: MP4/MOV, Matroska/WebM, AVI. Checked on the bytes, before ffmpeg
+    sees the file (ffmpeg picks its demuxer from the content, and some demuxers read other files)."""
+    head = path.open("rb").read(16)
+    return (head[4:8] in (b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip") or head[:4] == b"\x1aE\xdf\xa3"
+            or (head[:4] == b"RIFF" and head[8:12] == b"AVI "))
+
+
+def _running(key: str) -> int:
+    busy = {"stage": ("queued", "tracking", "analysing", "rendering"), "inspect_stage": ("running",)}[key]
+    return sum(j.get(key) in busy for j in JOBS.values())
+
+
+def _housekeep() -> None:
+    """Public mode: keep uploads under a quota and the number of visitor runs bounded (oldest go first)."""
+    if not PUBLIC:
+        return
+    ups = sorted((p for p in UPLOADS.glob("*") if p.is_file() and not p.name.startswith("sample-")),
+                 key=lambda p: p.stat().st_mtime)
+    total = sum(p.stat().st_size for p in ups)
+    while ups and total > UPLOAD_QUOTA:
+        p = ups.pop(0)
+        total -= p.stat().st_size
+        p.unlink(missing_ok=True)
+    runs = sorted((d for d in RUNS.glob("*") if d.is_dir() and d.name not in SEEDED), key=lambda d: d.stat().st_mtime)
+    for d in runs[:max(0, len(runs) - MAX_RUNS)]:
+        shutil.rmtree(d, ignore_errors=True)
+        JOBS.pop(d.name, None)
+
+
+def _review_key(video: str, name: str, p0, p1) -> tuple:
+    return (video, name, tuple(round(float(v)) for v in p0), tuple(round(float(v)) for v in p1))
 
 
 def _sha(path: Path) -> str:
@@ -108,27 +164,36 @@ def _file(h: BaseHTTPRequestHandler, path: Path, ctype: str) -> None:
     if not path.exists():
         h.send_error(404)
         return
-    data = path.read_bytes()
+    size = path.stat().st_size
+    start, end, code = 0, size - 1, 200
     rng = h.headers.get("Range")
     if rng and ctype.startswith("video/"):  # Safari needs byte ranges for video
-        start, _, end = rng.replace("bytes=", "").partition("-")
-        start = int(start or 0)
-        end = int(end) if end else len(data) - 1
-        chunk = data[start:end + 1]
-        h.send_response(206)
-        h.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
-        h.send_header("Content-Type", ctype)
-        h.send_header("Content-Length", str(len(chunk)))
-        h.send_header("Accept-Ranges", "bytes")
-        h.end_headers()
-        h.wfile.write(chunk)
-        return
-    h.send_response(200)
+        m = re.match(r"bytes=(\d*)-(\d*)$", rng.strip())
+        if not m:
+            h.send_error(416)
+            return
+        start = int(m.group(1) or 0)
+        end = min(int(m.group(2)) if m.group(2) else size - 1, size - 1)
+        if start > end:
+            h.send_error(416)
+            return
+        code = 206
+    h.send_response(code)
+    if code == 206:
+        h.send_header("Content-Range", f"bytes {start}-{end}/{size}")
     h.send_header("Content-Type", ctype)
-    h.send_header("Content-Length", str(len(data)))
+    h.send_header("Content-Length", str(end - start + 1))
     h.send_header("Accept-Ranges", "bytes")
     h.end_headers()
-    h.wfile.write(data)
+    with path.open("rb") as f:  # stream only the requested bytes
+        f.seek(start)
+        left = end - start + 1
+        while left > 0:
+            chunk = f.read(min(1 << 20, left))
+            if not chunk:
+                break
+            h.wfile.write(chunk)
+            left -= len(chunk)
 
 
 def _run_job(job_id: str, video: Path, spec: dict) -> None:
@@ -136,29 +201,35 @@ def _run_job(job_id: str, video: Path, spec: dict) -> None:
     out = RUNS / job_id
     try:
         job.update(stage="tracking")
-        members = []
-        for k, m in enumerate(spec["members"]):
-            tr_range = tuple(m["tension_range"]) if m.get("tension_range") else None
-            f_range = tuple(m["f0_range"]) if m.get("f0_range") else None
-            members.append(Member(m.get("name") or f"m{k + 1}", tuple(m["p0"]), tuple(m["p1"]),
-                                  half_width=float(m.get("half_width", 10)), length_m=m.get("length_m"),
-                                  mass_per_m=m.get("mass_per_m"), tension_range=tr_range, f0_range=f_range))
+        members, names = [], set()
+        num = lambda v: float(v) if v is not None and math.isfinite(float(v)) else None  # noqa: E731
+        for k, m in enumerate(spec["members"][:MAX_MEMBERS]):
+            pair = lambda v: tuple(float(x) for x in v)[:2] if v and len(v) == 2 else None  # noqa: E731
+            tr_range, f_range = pair(m.get("tension_range")), pair(m.get("f0_range"))
+            name = str(m.get("name") or f"m{k + 1}")[:40]
+            while name in names:  # names key every result: keep them unique
+                name += "'"
+            names.add(name)
+            members.append(Member(name, pair(m["p0"]), pair(m["p1"]),
+                                  half_width=min(max(float(m.get("half_width") or 10), 3.0), 80.0),
+                                  length_m=num(m.get("length_m")), mass_per_m=num(m.get("mass_per_m")),
+                                  tension_range=tr_range, f0_range=f_range))
         anchor = tuple(spec["anchor"]) if spec.get("anchor") else None
         tr = track(str(video), members, anchor=anchor, capture_fps=spec.get("capture_fps"))
         job.update(stage="analysing")
         from .analyze import picture_motion
         rep = analyze_tracking(tr, picture_motion_px=None if anchor else picture_motion(str(video), members))
         rep["video"] = str(video)
-        reviews = {m.get("name"): m["review"] for m in spec["members"] if m.get("review")}
-        for e in rep["members"]:  # the visual review travels with the member, so the inspector sees it
-            if e["name"] in reviews:
-                e["visual_review"] = reviews[e["name"]]
+        for mem, e in zip(members, rep["members"]):  # the server's own visual review travels with the member
+            r = REVIEWS.get(_review_key(video.name, mem.name, mem.p0, mem.p1))
+            if r:
+                e["visual_review"] = r
         if spec.get("site_notes"):
-            rep["site_notes"] = spec["site_notes"][:1000]
+            rep["site_notes"] = str(spec["site_notes"])[:1000]
         save(rep, out)
         job.update(stage="rendering", report=rep)
         from .render import render_hero
-        render_hero(str(video), tr, rep, out / "hero.mp4", speed=float(spec.get("speed", 0.25)))
+        render_hero(str(video), tr, rep, out / "hero.mp4", speed=min(max(float(spec.get("speed") or 0.25), 0.01), 1.0))
         job.update(stage="done", hero=f"/runs/{job_id}/hero.mp4")
     except Exception as e:  # noqa: BLE001
         job.update(stage="error", error=f"{type(e).__name__}: {e}", trace=traceback.format_exc()[-2000:])
@@ -170,11 +241,15 @@ def _run_inspect(job_id: str, context: str, mode: str, baseline_id: str | None =
         job.update(inspect_stage="running")
         from .agent import inspect
         rep = json.loads((RUNS / job_id / "report.json").read_text())
-        base = _load_run(baseline_id)["report"] if baseline_id and _load_run(baseline_id) else None
+        b = _load_run(baseline_id) if _safe(baseline_id) else None
+        base = b["report"] if b else None
         md = inspect(rep, context, RUNS / job_id, mode=mode, log=lambda *_: None, baseline=base)
         if base:  # remembered, so the replay can show what changed
             (RUNS / job_id / "baseline.txt").write_text(Path(baseline_id).name)
             job["baseline"] = Path(baseline_id).name
+        else:
+            (RUNS / job_id / "baseline.txt").unlink(missing_ok=True)
+            job.pop("baseline", None)
         job.update(inspect_stage="done", inspection=md.read_text(),
                    agent=json.loads((RUNS / job_id / "agent.json").read_text()))
     except Exception as e:  # noqa: BLE001
@@ -183,9 +258,11 @@ def _run_inspect(job_id: str, context: str, mode: str, baseline_id: str | None =
 
 def _load_run(job_id: str) -> dict | None:
     """A job from memory, or rebuilt from its run folder (so finished runs survive a server restart)."""
+    if not _safe(job_id):
+        return None
     if job_id in JOBS:
         return JOBS[job_id]
-    d = RUNS / Path(job_id).name
+    d = RUNS / job_id
     if not (d / "report.json").exists():
         return None
     job = {"id": job_id, "stage": "done", "report": json.loads((d / "report.json").read_text())}
@@ -194,6 +271,8 @@ def _load_run(job_id: str) -> dict | None:
     if (d / "agent.json").exists():
         job["agent"] = json.loads((d / "agent.json").read_text())
         job["inspect_stage"] = "done"
+        if job["agent"].get("error"):
+            job["inspect_error"] = job["agent"]["error"]
         job["inspection"] = (d / "inspection.md").read_text() if (d / "inspection.md").exists() else ""
     if (d / "approval.json").exists():
         job["approved"] = json.loads((d / "approval.json").read_text())
@@ -213,8 +292,14 @@ class Handler(BaseHTTPRequestHandler):
         if u.path in ("/", "/index.html"):
             return _file(self, STATIC / "index.html", "text/html; charset=utf-8")
         if u.path == "/api/frame":
-            vid = UPLOADS / Path(q["video"][0]).name
-            png = subprocess.run(["ffmpeg", "-v", "error", "-ss", q.get("t", ["0.2"])[0], "-i", str(vid),
+            vid = _video(q.get("video", [""])[0])
+            try:
+                t = min(max(float(q.get("t", ["0.2"])[0]), 0.0), 3600.0)
+            except ValueError:
+                t = None
+            if not vid or t is None:
+                return _json(self, {"error": "unknown clip or bad time"}, 400)
+            png = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(vid),
                                   "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"],
                                  capture_output=True).stdout
             self.send_response(200)
@@ -225,21 +310,28 @@ class Handler(BaseHTTPRequestHandler):
             return
         if u.path == "/api/check":
             from .clipcheck import check
-            vid = UPLOADS / Path(q["video"][0]).name
-            fps = float(q["capture_fps"][0]) if q.get("capture_fps") else None
+            vid = _video(q.get("video", [""])[0])
+            try:
+                fps = float(q["capture_fps"][0]) if q.get("capture_fps") else None
+                if fps is not None and not (1 <= fps <= 100000):
+                    raise ValueError
+            except ValueError:
+                return _json(self, {"error": "capture_fps must be a number of frames per second"}, 400)
+            if not vid:
+                return _json(self, {"error": "unknown clip"}, 404)
             try:
                 return _json(self, check(str(vid), capture_fps=fps))
             except Exception as e:  # noqa: BLE001
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 500)
         if u.path == "/api/samples":
-            return _json(self, {"samples": _samples(), "replays": _replays()})
+            return _json(self, {"samples": _samples(), "replays": _replays(), "public": PUBLIC})
         if u.path == "/api/runs":
             runs = sorted((p.name for p in RUNS.glob("*") if (p / "report.json").exists()), reverse=True)
             return _json(self, {"runs": runs[:50]})
         if u.path.startswith("/api/jobs/") and u.path.endswith("/diff"):
             job_id = u.path.split("/")[3]
             base_id = q.get("baseline", [""])[0]
-            a, b = _load_run(base_id), _load_run(job_id)
+            a, b = _load_run(base_id), _load_run(job_id)  # _load_run rejects unsafe ids
             if not a or not b:
                 return _json(self, {"error": "unknown run"}, 404)
             from .fingerprint import describe, diff
@@ -251,9 +343,9 @@ class Handler(BaseHTTPRequestHandler):
             job = _load_run(u.path.rsplit("/", 1)[-1])
             return _json(self, job or {"error": "unknown job"}, 200 if job else 404)
         if u.path.startswith("/runs/"):
-            parts = Path(u.path).parts  # /, runs, id, file
-            if len(parts) == 4:
-                p = RUNS / Path(parts[2]).name / Path(parts[3]).name
+            parts = u.path.split("/")  # "", runs, id, file
+            if len(parts) == 4 and _safe(parts[2]) and _safe(parts[3]):
+                p = RUNS / parts[2] / parts[3]
                 ctype = {".mp4": "video/mp4", ".json": "application/json", ".jpg": "image/jpeg"}.get(
                     p.suffix, "text/markdown; charset=utf-8")
                 return _file(self, p, ctype)
@@ -261,13 +353,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
-        n = int(self.headers.get("Content-Length", "0"))
+        try:
+            n = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return _json(self, {"error": "bad Content-Length"}, 400)
         if u.path == "/api/upload":
-            if PUBLIC and n > MAX_UPLOAD:
-                return _json(self, {"error": f"clip larger than {MAX_UPLOAD >> 20} MB: trim it to 10 s"}, 413)
+            if n <= 0 or (PUBLIC and n > MAX_UPLOAD):
+                return _json(self, {"error": f"send a clip of at most {MAX_UPLOAD >> 20} MB (trim it to 10 s)"}, 413)
             UPLOADS.mkdir(parents=True, exist_ok=True)
-            name = f"{uuid.uuid4().hex[:10]}.mp4" if not u.query else \
-                f"{uuid.uuid4().hex[:6]}-{Path(parse_qs(u.query).get('name', ['clip.mp4'])[0]).stem[:40]}.mp4"
+            stem = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(parse_qs(u.query).get("name", ["clip.mp4"])[0]).stem)[:40]
+            name = f"{uuid.uuid4().hex[:6]}-{stem or 'clip'}.mp4"
             dest = UPLOADS / name
             with open(dest, "wb") as f:
                 left = n
@@ -277,9 +372,24 @@ class Handler(BaseHTTPRequestHandler):
                         break
                     f.write(chunk)
                     left -= len(chunk)
-            info = probe(str(dest))
+            if not _looks_like_video(dest):
+                dest.unlink(missing_ok=True)
+                return _json(self, {"error": "not a video file this app reads (MP4/MOV, MKV/WebM or AVI)"}, 415)
+            try:
+                info = probe(str(dest))
+            except Exception:  # noqa: BLE001
+                dest.unlink(missing_ok=True)
+                return _json(self, {"error": "the video could not be read"}, 415)
+            _housekeep()
             return _json(self, {"video": name, "width": info.width, "height": info.height, "fps": info.fps})
-        body = json.loads(self.rfile.read(n) or b"{}")
+        if n > MAX_BODY:
+            return _json(self, {"error": "request too large"}, 413)
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+            if not isinstance(body, dict):
+                raise ValueError
+        except ValueError:
+            return _json(self, {"error": "send a JSON object"}, 400)
         if u.path == "/api/sample":
             s = next((x for x in _samples() if x["id"] == body.get("id")), None)
             if not s:
@@ -292,7 +402,12 @@ class Handler(BaseHTTPRequestHandler):
             return _json(self, {"video": dest.name, "width": info.width, "height": info.height, "fps": info.fps,
                                 "sample": s})
         if u.path == "/api/analyze":
-            video = UPLOADS / Path(body["video"]).name
+            video = _video(body.get("video"))
+            if not video or not isinstance(body.get("members"), list) or not body["members"]:
+                return _json(self, {"error": "unknown clip or no members"}, 400)
+            if PUBLIC and _running("stage") >= MAX_RUNNING:
+                return _json(self, {"error": "the demo server is busy measuring other clips: try again in a minute"}, 429)
+            _housekeep()
             job_id = time.strftime("%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
             JOBS[job_id] = {"id": job_id, "stage": "queued", "video": body["video"]}
             threading.Thread(target=_run_job, args=(job_id, video, body), daemon=True).start()
@@ -301,17 +416,22 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 from . import sam_local
                 from .video import read_frames
-                vid = UPLOADS / Path(body["video"]).name
-                concept = body.get("concept", "rope")
+                vid = _video(body.get("video"))
+                if not vid:
+                    return _json(self, {"error": "unknown clip"}, 404)
+                concept = str(body.get("concept", "rope"))[:60]
                 cached = _sam_cached(vid, concept)
                 if cached:
-                    cached["backend"] = "SAM 3.1 (run earlier on-device for this clip; result saved)"
+                    was = cached.get("backend", "SAM 3.1").replace("on this computer", "on-device")
+                    cached["backend"] = f"{was}, result saved from an earlier run"
                     return _json(self, cached)
                 frame = next(iter(read_frames(str(vid))))
                 if sam_local.available():  # on-device SAM 3.1 (MLX): real masks
                     ms, extra = sam_local.find_members(frame, concept)
                     backend = "SAM 3.1 on this computer (MLX)"
                 elif os.environ.get("MODEL_API_KEY"):  # Meta Model API: boxes
+                    if not _model_call_allowed():
+                        return _json(self, {"error": "model call limit reached for this hour on the public demo"}, 429)
                     from .sam import find_members
                     ms, extra, backend = find_members(frame, concept), [], "SAM 3.1 via Meta Model API"
                 else:
@@ -328,30 +448,51 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 502)
         if u.path == "/api/review":
-            if not _llm_allowed():
-                return _json(self, {"error": "model call limit reached for this hour on the public demo"}, 429)
+            vid = _video(body.get("video"))
+            if not vid or not isinstance(body.get("members"), list):
+                return _json(self, {"error": "unknown clip or no members"}, 400)
+            if len(body["members"]) > MAX_REVIEW:
+                return _json(self, {"error": f"at most {MAX_REVIEW} candidates per review"}, 400)
             try:
                 from .review import review
                 from .video import read_frames
-                frame = next(iter(read_frames(str(UPLOADS / Path(body["video"]).name))))
-                ms = [Member(m["name"], tuple(m["p0"]), tuple(m["p1"])) for m in body["members"]]
-                return _json(self, {"reviews": review(frame, ms, context=body.get("context", ""))})
+                frame = next(iter(read_frames(str(vid))))
+                ms = [Member(str(m["name"])[:40], tuple(float(v) for v in m["p0"])[:2],
+                             tuple(float(v) for v in m["p1"])[:2]) for m in body["members"]]
+                res = review(frame, ms, context=str(body.get("context", ""))[:1000])
+                for m, r in zip(ms, res):  # kept on the server: a measurement only trusts verdicts it made itself
+                    REVIEWS[_review_key(vid.name, m.name, m.p0, m.p1)] = r
+                return _json(self, {"reviews": res})
             except Exception as e:  # noqa: BLE001
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 502)
         if u.path.startswith("/api/jobs/") and u.path.endswith("/inspect"):
             job_id = u.path.split("/")[3]
-            if not _llm_allowed():
-                return _json(self, {"error": "model call limit reached for this hour on the public demo"}, 429)
-            _load_run(job_id)
-            threading.Thread(target=_run_inspect, args=(job_id, body.get("context", ""), body.get("mode", "bench"),
+            job = _load_run(job_id)
+            if not job or not (RUNS / job_id / "report.json").exists():
+                return _json(self, {"error": "unknown run"}, 404)
+            if PUBLIC and job_id in SEEDED:
+                return _json(self, {"error": "this is a recorded example: measure your own clip to run an inspection"}, 403)
+            if job.get("inspect_stage") == "running":
+                return _json(self, {"error": "an inspection of this run is already running"}, 409)
+            if PUBLIC and _running("inspect_stage") >= MAX_RUNNING:
+                return _json(self, {"error": "the demo server is busy: try again in a minute"}, 429)
+            mode = "field" if body.get("mode") == "field" else "bench"
+            job["inspect_stage"] = "running"
+            threading.Thread(target=_run_inspect, args=(job_id, str(body.get("context", ""))[:2000], mode,
                                                         body.get("baseline")), daemon=True).start()
             return _json(self, {"ok": True})
         if u.path.startswith("/api/jobs/") and u.path.endswith("/approve"):
             job_id = u.path.split("/")[3]
+            if not _load_run(job_id):
+                return _json(self, {"error": "unknown run"}, 404)
+            if PUBLIC and job_id in SEEDED:
+                return _json(self, {"error": "this is a recorded example and cannot be signed"}, 403)
+            by = str(body.get("by", "")).strip()[:80]
+            if not by:
+                return _json(self, {"error": "enter the engineer's name"}, 400)
             try:
                 from .agent import approve
-                _load_run(job_id)
-                md = approve(RUNS / job_id, body["by"])
+                md = approve(RUNS / job_id, by)
                 JOBS[job_id]["inspection"] = md.read_text()
                 JOBS[job_id]["approved"] = json.loads((RUNS / job_id / "approval.json").read_text())
                 return _json(self, {"ok": True, "approval": JOBS[job_id]["approved"]})
@@ -361,12 +502,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(port: int = 8765, host: str = "127.0.0.1") -> None:
-    from .llm import load_env
-    load_env()
+    from . import llm
+    llm.load_env()
+    llm.CALL_GATE = _model_call_allowed  # every model call is charged to the hourly budget
     RUNS.mkdir(parents=True, exist_ok=True)
     for d in (SAMPLES / "runs").glob("*/") if (SAMPLES / "runs").exists() else []:
-        if (d / "report.json").exists() and not (RUNS / d.name).exists():  # finished runs to replay
-            shutil.copytree(d, RUNS / d.name)
+        if (d / "report.json").exists():  # recorded example runs: restored on every start, read-only in public mode
+            SEEDED.add(d.name)
+            if PUBLIC or not (RUNS / d.name).exists():
+                shutil.rmtree(RUNS / d.name, ignore_errors=True)
+                shutil.copytree(d, RUNS / d.name)
     srv = ThreadingHTTPServer((host, port), Handler)
     print(f"Resonance on http://{host}:{port}")
     if host != "127.0.0.1":

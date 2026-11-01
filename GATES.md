@@ -25,3 +25,13 @@ Added after testing on the open wind-tunnel cable dataset (Zenodo 15655246), whi
 | Gate | Where | Threshold (gates-v2) |
 |---|---|---|
 | Single-mode identification | `analyze` | only when the ladder is refused and a prior exists: dominant peak SNR ≥ 50 and ≥ 2× the next peak; mode number n = interior dips + 1 (n ≤ 6); f/n inside the prior; n × prior max ≤ fs / 2.5 (alias guard per mode). Result is provisional, never verified. |
+
+## gates-v3 (2026-11-01)
+
+Added after a review of the refusal path found that, without a marked static anchor, camera motion was never gated (a walking camera could pass for cable vibration). Re-validated on every clip in the README: no result changed; the moving-camera stock clips are now refused for the camera itself.
+
+| Gate | Where | Threshold (gates-v3) |
+|---|---|---|
+| Camera motion without an anchor | `analyze.picture_motion` → `clipcheck.global_shake` | camera motion RMS > 5 px → refused. Motion is the median shift over textured tiles (4×3 grid at 320 px width, tile std ≥ 3 grey levels, match ≥ 0.15) against a keyframe that is renewed when fewer than a third of the tiles still match; the members being measured are left out. Measured: cello close-up 0.03 px, tree 1.4, wind tunnel 0.02, bench 0.27, drifting handheld 11, walking camera 90. |
+| Clip check (advice only, before marking) | `clipcheck.check` | whole-picture motion ≤ 1 px ok, ≤ 30 px warn (the cable may fill the view; the measurement re-checks), > 30 px fail |
+| Visual review of SAM candidates | `review` | Muse Spark Open verdict; a rejected candidate is not measured unless the user keeps it; any failure → "unreviewed", never "confirmed" |

@@ -1,10 +1,29 @@
 # Resonance
 
-Cable tension and vibration from a phone video. SAM 3.1 places the sensors, Muse Spark Open checks what SAM found, physics checks itself, and a Muse Spark Open agent writes the report an engineer signs off.
+Measure cable tension and vibration from a phone video, and refuse, with the reason, whenever the physics does not check out.
 
-Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026). Everything in this repository was written during the event.
+**Live demo:** _link added after deployment_ · **3-minute video:** _link added at submission_
 
-Built with Muse Spark Open and SAM 3.1 (Meta). Screening tool: it does not certify structures; an engineer signs every report.
+Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026). Everything in this repository was written during the event. Built with Muse Spark Open and SAM 3.1 (Meta). Screening tool: it does not certify structures; an engineer signs every report.
+
+## Meta models, and the job each one does
+
+| Model | Where it runs | Job |
+|---|---|---|
+| **SAM 3.1** | on the laptop through MLX (Apple silicon, no network, which matters at a remote bridge), or the Meta Model API | finds every cable from a noun phrase; each mask becomes a centre line of virtual sensors |
+| **Muse Spark Open** | Baseten | three separate jobs: **(1)** looks at the frame with each SAM candidate highlighted and rejects what is not a tensioned member; **(2)** the inspection agent that writes the report from tool calls only; **(3)** a separate call, given only the evidence and the field notes, that checks every claim and fails closed |
+
+```mermaid
+flowchart LR
+  V[Phone video] --> C[Clip check: true fps, timing, camera, resolvable band]
+  C --> S[SAM 3.1 finds the cables]
+  S --> R[Muse Spark Open: is this really a tensioned cable?]
+  R --> P[Physics: harmonic ladder, mode shapes, alias guard, camera gate]
+  P -->|verified / provisional / refused| A[Muse Spark Open agent writes the report]
+  A --> K[Code rules: no number on a refused cable, never 'safe']
+  K --> F[Muse Spark Open verifier checks every claim]
+  F --> E[Engineer signs: hash of the evidence]
+```
 
 ## How it works
 
@@ -71,3 +90,9 @@ python -m pytest -q
 Members on the command line: `name:x0,y0,x1,y1:L=1.8:m=0.022:T=5-300` (pixels, metres, kg/m, plausible tension range in N).
 
 Requires Python 3.12, numpy, scipy, Pillow and ffmpeg.
+
+On-device SAM 3.1: create a separate Python environment with `pip install "mlx-vlm>=0.4.3"`, download `mlx-community/sam3.1-bf16`, and set `RESONANCE_SAM_PYTHON` (that environment's python) and `RESONANCE_SAM_MODEL` (the model folder) in `.env`. Without it, detection uses the Meta Model API (`MODEL_API_KEY`).
+
+## Hosted demo
+
+`deploy/modal_app.py` serves the app from one Modal container: `RESONANCE_SAMPLES_DIR=/path/to/samples modal deploy deploy/modal_app.py`. The samples folder holds `samples.json` and its clips, SAM 3.1 results computed on-device for those clips (`sam_cache/`), and finished runs to replay (`runs/`, `replays.json`). With `RESONANCE_PUBLIC=1` the server caps model calls per hour and upload size; the model key comes from the Modal secret `resonance-keys`.

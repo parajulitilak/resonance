@@ -57,7 +57,10 @@ def analyze_tracking(tr: Tracking, picture_motion_px: float | None = None) -> di
                          "too much to correct; film from a tripod or rest the phone on something solid")
     elif tr.shake is None and picture_motion_px is not None:
         report["picture_motion_px"] = picture_motion_px
-        if picture_motion_px > 5.0:  # no anchor to correct with: the camera's own motion would look like vibration
+        if not np.isfinite(picture_motion_px):  # could not be judged: never treat as still
+            camera_reason = ("camera motion could not be checked (too little static texture away from the cables) and "
+                             "no static anchor was marked: mark a static, textured anchor or film again")
+        elif picture_motion_px > 5.0:  # no anchor to correct with: the camera's own motion would look like vibration
             camera_reason = (f"the whole picture moved {picture_motion_px:.0f} px RMS and no static anchor was marked: "
                              "camera motion cannot be told apart from cable motion; brace the phone and film again")
     report["camera_gate"] = camera_reason
@@ -201,20 +204,22 @@ def analyze_tracking(tr: Tracking, picture_motion_px: float | None = None) -> di
 
 
 def picture_motion(path: str, members: list[Member] | None = None) -> float:
-    """Camera motion from the whole frame, leaving out the members themselves (they are meant to move)."""
+    """Camera motion RMS (px) away from the members themselves (they are meant to move); NaN if it cannot be
+    judged, which the camera gate treats as a refusal."""
     from .clipcheck import global_shake
     sh = global_shake(path, exclude=[_region(m) for m in members or []])
-    return float(np.sqrt(np.mean(np.sum((sh - sh.mean(0)) ** 2, 1)))) if len(sh) > 1 else 0.0
+    if sh is None or len(sh) < 2:
+        return float("nan")
+    return float(np.sqrt(np.mean(np.sum((sh - sh.mean(0)) ** 2, 1))))
 
 
-def _region(m: Member, pad: float = 20.0) -> tuple[float, float, float, float]:
+def _region(m: Member, pad: float = 20.0):
+    """What to leave out of the camera estimate: a patch's box, or a band along a cable's line (a bounding box
+    of a diagonal cable would cover most of the frame)."""
     if m.kind == "patch" and m.box:
         x0, y0, x1, y1 = m.box
-    else:
-        (x0, y0), (x1, y1) = m.p0, m.p1
-        x0, x1, y0, y1 = min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)
-        pad += m.half_width
-    return x0 - pad, y0 - pad, x1 + pad, y1 + pad
+        return x0 - pad, y0 - pad, x1 + pad, y1 + pad
+    return tuple(m.p0), tuple(m.p1), m.half_width + pad
 
 
 def analyze(path: str, members: list[Member], anchor=None, capture_fps: float | None = None,

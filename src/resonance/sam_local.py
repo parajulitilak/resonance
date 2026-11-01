@@ -77,7 +77,7 @@ def find_members(frame_rgb: np.ndarray, concept: str = "rope", prefix: str = "m"
             continue
         try:
             m = from_mask("tmp", mask)
-        except ValueError:
+        except Exception:  # noqa: BLE001 - a degenerate mask (a line one pixel wide) is skipped, not fatal
             continue
         if m.length_px / max(m.meta["width_px"], 1.0) < min_elongation:
             continue

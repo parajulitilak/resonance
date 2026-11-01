@@ -162,7 +162,8 @@
 </main>
 <script>
 const $ = s => document.querySelector(s);
-const esc = t => String(t ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const esc = t => String(t ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');  // safe in text and in quoted attributes
 let currentSample = null;
 let video = null, vw = 0, vh = 0, members = [], pending = null, anchor = null, anchorMode = false, job = null, report = null;
 const COLORS = {verified:'#26c4aa', provisional:'#e69f00', refused:'#ff6a3d', frequency:'#56b4e9', none:'#c9d1dc'};
@@ -230,6 +231,8 @@ async function upload(file) {
 
 async function loadSamples() {
   const j = await (await fetch('/api/samples')).json();
+  if (j.public) $('#clipinfo').textContent = 'Public demo: clips you upload and their results are visible to other ' +
+    'visitors and are deleted after a while. Model calls are rationed per hour.';
   if (j.replays && j.replays.length) $('#replays').innerHTML = '<span class="muted">Finished runs, with the agent report:</span> ' +
     j.replays.map(r => `<a href="?run=${encodeURIComponent(r.id)}">${esc(r.title)}</a>`).join(' · ');
   if (!j.samples.length) return;
@@ -251,7 +254,7 @@ loadSamples();
 function openClip(j, label) {
   video = j.video; vw = j.width; vh = j.height; members = []; anchor = null;
   $('#clipinfo').textContent = `${label} · ${j.width}×${j.height} · container says ${j.fps.toFixed(1)} fps (true timing is measured per frame)`;
-  $('#frame').src = '/api/frame?video=' + video; $('#stage').hidden = false;
+  $('#frame').src = '/api/frame?video=' + encodeURIComponent(video); $('#stage').hidden = false;
   $('#frame').onload = () => draw();
   $('#detect').disabled = false; $('#anchorBtn').disabled = false; renderMembers();
   checkClip();
@@ -259,7 +262,7 @@ function openClip(j, label) {
 
 async function checkClip() {
   $('#checks').innerHTML = '<div class="muted">Checking the clip: true frame rate, timing, camera shake, exposure…</div>';
-  const j = await (await fetch('/api/check?video=' + video)).json();
+  const j = await (await fetch('/api/check?video=' + encodeURIComponent(video))).json();
   if (j.error) { $('#checks').innerHTML = `<div class="muted">Clip check failed: ${esc(j.error)}</div>`; return; }
   const cls = {ok: 'ok', warn: 'warn', fail: 'bad'}[j.status];
   $('#checks').innerHTML = j.checks.map(c => `<div class="chk"><span class="dot ${c.status}"></span><b>${esc(c.key)}</b>
@@ -300,12 +303,20 @@ $('#detect').onclick = async () => {
 async function reviewMembers() {
   if (!members.length) return;
   $('#reviewinfo').textContent = `Muse Spark Open is looking at each candidate: is it really a tensioned member?`;
-  const j = await (await fetch('/api/review', {method:'POST', body: JSON.stringify({video, context: $('#notes').value,
-    members: members.map(m => ({name: m.name, p0: m.p0, p1: m.p1}))})})).json();
-  if (j.error) { $('#reviewinfo').textContent = 'Visual review unavailable: ' + j.error; return; }
+  let j;
+  try {
+    j = await (await fetch('/api/review', {method:'POST', body: JSON.stringify({video, context: $('#notes').value,
+      members: members.slice(0, 25).map(m => ({name: m.name, p0: m.p0, p1: m.p1}))})})).json();
+  } catch (e) { j = {error: String(e)}; }
+  if (j.error || !j.reviews) {  // fail closed: no verdict means unreviewed, never confirmed
+    members.forEach(m => { m.review = {name: m.name, verdict: 'unreviewed', reason: j.error || 'review failed'}; });
+    $('#reviewinfo').textContent = 'Visual review unavailable (' + (j.error || 'no answer') + '): every candidate is unreviewed.';
+    renderMembers(); draw(); return;
+  }
   j.reviews.forEach(r => { const m = members.find(x => x.name === r.name); if (!m) return;
     m.review = r; if (r.verdict === 'rejected') m.keep = false; });
-  const n = k => j.reviews.filter(r => r.verdict === k).length;
+  members.forEach(m => { if (!m.review) m.review = {name: m.name, verdict: 'unreviewed', reason: 'not reviewed (25 per request)'}; });
+  const n = k => members.filter(m => m.review.verdict === k).length;
   $('#reviewinfo').textContent = `Muse Spark Open: ${n('confirmed')} confirmed, ${n('rejected')} rejected (unticked; tick to keep), ` +
     `${n('unreviewed')} not reviewed. Hover a verdict for the reason.`;
   renderMembers(); draw();
@@ -317,7 +328,9 @@ $('#analyze').onclick = async () => {
   const r = await fetch('/api/analyze', {method:'POST', body: JSON.stringify({video, members: members.filter(m => m.keep !== false),
     anchor: anchor && anchor.length === 4 ? anchor : null, site_notes: $('#notes').value})});
   if (!$('#context').value) $('#context').value = $('#notes').value;
-  job = (await r.json()).job; report = null; history.replaceState(null, '', '?run=' + job); poll();
+  const j = await r.json();
+  if (j.error) { $('#status').textContent = j.error; $('#analyze').disabled = false; return; }
+  job = j.job; report = null; history.replaceState(null, '', '?run=' + encodeURIComponent(job)); poll();
 };
 
 async function poll() {
@@ -420,7 +433,8 @@ function showAgent(j) {
   const claimHtml = rep.members.map((it, i) => {
     const v = verd.find(x => x.kind === 'statement' && x.id === i);
     const badge = v ? (v.verdict === 'agree' ? '<span class="badge agree">verifier agrees</span>'
-                                             : `<span class="badge dispute" title="${esc(v.reason)}">disputes → needs engineer</span>`) : '';
+                                             : `<span class="badge dispute" title="${esc(v.reason)}">disputes → needs engineer</span>`)
+                    : '<span class="badge dispute">not verified → needs engineer</span>';
     return `<div class="card"><b>${esc(it.name)}</b> <span class="chip ${it.status === 'refused' ? 'refused' : it.status === 'flagged' ? 'provisional' : 'verified'}">${esc(it.status)}</span>${badge}
       <div style="margin-top:4px">${esc(it.statement)}</div>
       ${(it.evidence || []).length ? `<div style="margin-top:6px">${it.evidence.map(e => `<span class="ev">${esc(e)}</span>`).join(' ')}</div>` : ''}</div>`;
@@ -428,17 +442,25 @@ function showAgent(j) {
   const flags = (a.actions.flags || []).map((f, k) => {
     const v = verd.find(x => x.kind === 'flag' && x.flag_index === k);
     return `<div class="card warn">⚑ <b>${esc(f.severity)}</b> · ${esc(f.name)}: ${esc(f.finding)}
-      ${v ? (v.verdict === 'agree' ? '<span class="badge agree">agrees</span>' : '<span class="badge dispute">disputed</span>') : ''}</div>`;
+      ${v ? (v.verdict === 'agree' ? '<span class="badge agree">agrees</span>' : '<span class="badge dispute">disputed</span>')
+          : '<span class="badge dispute">not verified</span>'}</div>`;
   }).join('');
   const reshoots = (a.actions.reshoots || []).map(r => `<div class="card bad"><b>Re-shoot ${esc(r.name)}</b>: ${esc(r.reason)}<br>${esc(r.instructions)}</div>`).join('');
   const rules = (a.violations || []).map(v => `<div class="muted">Blocked by code: ${esc(v.member)} · ${esc(v.rule)}</div>`).join('');
-  $('#claims').innerHTML = `<p>${esc(rep.summary)}</p>` + claimHtml + flags + reshoots + rules;
+  const sv = verd.find(x => x.kind === 'summary');
+  const sbadge = !rep.summary ? '' : sv ? (sv.verdict === 'agree' ? '<span class="badge agree">verifier agrees</span>'
+    : `<span class="badge dispute" title="${esc(sv.reason)}">disputes → needs engineer</span>`) : '<span class="badge dispute">not verified</span>';
+  $('#claims').innerHTML = `<p>${esc(rep.summary)} ${sbadge}</p>` + claimHtml + flags + reshoots + rules;
   const ms = (report || j.report).members, cnt = s => ms.filter(m => m.ladder.status === s).length;
   const n = ms.length, f = (a.actions.flags || []).length;
   if (j.approved) {
     $('#signcard').innerHTML = `<div class="card ok" style="margin-top:14px"><b style="color:var(--ok)">Signed by ${esc(j.approved.by)}</b> · ${esc(j.approved.at)}
       <div class="hash">evidence sha256 ${esc(j.approved.sha256)}</div><div class="muted">Re-running the inspection voids this signature.
-      <a href="/runs/${job}/inspection.md" download>Download report</a></div></div>`;
+      <a href="/runs/${encodeURIComponent(job)}/inspection.md" download>Download report</a></div></div>`;
+  } else if (a.error || verd.length < rep.members.length + (a.actions.flags || []).length + (rep.summary ? 1 : 0)) {
+    $('#signcard').innerHTML = `<div class="card bad" style="margin-top:14px"><b>Signing disabled:</b>
+      ${a.error ? 'the inspection did not finish (' + esc(a.error) + ').' : 'not every claim was independently verified.'}
+      Run the inspection again.</div>`;
   } else {
     $('#signcard').innerHTML = `<div class="card" style="margin-top:14px"><b>You are signing:</b> ${n} cables · ${cnt('verified')} verified ·
       ${cnt('provisional')} provisional · ${cnt('refused')} refused · ${f} flag${f === 1 ? '' : 's'} · evidence = report.json + agent.json (hashed on signing)
@@ -475,7 +497,7 @@ if (params.get('video') && !params.get('run')) {
   video = params.get('video');
   $('#frame').onload = () => { vw = $('#frame').naturalWidth; vh = $('#frame').naturalHeight;
     $('#clipinfo').textContent = `${video} · ${vw}×${vh}`; draw(); };
-  $('#frame').src = '/api/frame?video=' + video; $('#stage').hidden = false;
+  $('#frame').src = '/api/frame?video=' + encodeURIComponent(video); $('#stage').hidden = false;
   $('#detect').disabled = false; $('#anchorBtn').disabled = false; renderMembers(); checkClip();
   if (params.get('notes')) $('#notes').value = params.get('notes');
   if (params.get('detect')) { $('#concept').value = params.get('detect'); $('#detect').click(); }

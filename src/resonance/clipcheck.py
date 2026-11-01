@@ -39,31 +39,51 @@ def _camera(tags: dict) -> str | None:
     return " ".join(x for x in (make, model) if x) or None
 
 
+def _keep_mask(h: int, w: int, k: float, exclude) -> np.ndarray:
+    """True where the camera may be judged: outside every excluded box (x0, y0, x1, y1) and every band
+    ((x0, y0), (x1, y1), half_width) along a member's line. Coordinates in full-resolution pixels."""
+    keep = np.ones((h, w), bool)
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32) * k
+    for e in exclude or []:
+        if len(e) == 4:
+            x0, y0, x1, y1 = e
+            keep &= ~((xs >= x0) & (xs <= x1) & (ys >= y0) & (ys <= y1))
+        else:
+            (ax, ay), (bx, by), hw = e
+            dx, dy = bx - ax, by - ay
+            t = np.clip(((xs - ax) * dx + (ys - ay) * dy) / max(dx * dx + dy * dy, 1e-9), 0, 1)
+            keep &= np.hypot(xs - (ax + t * dx), ys - (ay + t * dy)) > hw
+    return keep
+
+
 def global_shake(path: str, width: int = 320, max_frames: int = 3000, grid: tuple[int, int] = (4, 3),
-                 exclude: list[tuple[float, float, float, float]] | None = None) -> np.ndarray:
-    """Camera motion of every frame, in full-resolution pixels ([frames, 2]).
+                 exclude: list | None = None) -> np.ndarray | None:
+    """Camera motion through the clip, in full-resolution pixels ([samples, 2]), or None if it cannot be judged.
 
     The frame is cut into tiles; each textured tile is matched against a keyframe by phase correlation and the
     median shift across tiles is taken, so a cable or string moving inside a few tiles does not count as camera
     motion while a moving camera shifts them all. When the tiles stop matching the keyframe (the view has
-    changed), the current frame becomes the new keyframe and the motion so far is carried over.
-    `exclude`: boxes (x0, y0, x1, y1, full-resolution pixels), e.g. the members being measured.
-    Returns an empty array when fewer than three textured tiles are left to judge the camera by.
+    changed), the current frame becomes the new keyframe and the motion so far is carried over. Long clips are
+    sampled evenly (at most `max_frames` frames) so the whole clip is covered.
+    `exclude`: boxes and member bands (see `_keep_mask`) left out of the estimate.
+    None means fewer than three textured tiles were left, at the start or at a re-key: the caller must treat the
+    camera as unchecked, never as still.
     """
-    full = probe(path).width
+    info = probe(path)
+    full = info.width
     k = full / min(width, full)
+    stride = max(1, -(-(info.frames or 0) // max_frames))
     nx, ny = grid
-    pos, base, tiles = [], np.zeros(2), None
+    pos, base, tiles, keep = [], np.zeros(2), None, None
     for i, img in enumerate(read_frames(path, width=width, gray=True)):
-        if i >= max_frames:
-            break
+        if i % stride:
+            continue
         g = img.astype(np.float32)
         if tiles is None:  # (re)key: textured tiles of this frame, away from the members
             h, w = g.shape
             th, tw = h // ny, w // nx
-            keep = np.ones((h, w), bool)
-            for x0, y0, x1, y1 in exclude or []:
-                keep[max(0, int(y0 / k)):max(0, int(np.ceil(y1 / k))), max(0, int(x0 / k)):max(0, int(np.ceil(x1 / k)))] = False
+            if keep is None:
+                keep = _keep_mask(h, w, k, exclude)
             win = _hann2d(th, tw)
             tiles = []
             for r in range(ny):
@@ -73,7 +93,7 @@ def global_shake(path: str, width: int = 320, max_frames: int = 3000, grid: tupl
                     if keep[sl].mean() > 0.5 and t.std() >= 3.0:
                         tiles.append((sl, np.fft.fft2((t - t.mean()) * win)))
             if len(tiles) < 3:
-                return np.zeros((0, 2))
+                return None
             last = np.zeros(2)
         shifts, quality = [], []
         for sl, ref in tiles:
@@ -126,8 +146,14 @@ def check(path: str, capture_fps: float | None = None) -> dict:
         ("" if duration >= 4 else "; film at least 4 s of steady vibration"))
 
     sh = global_shake(path)
-    rms = float(np.sqrt(np.mean(np.sum((sh - sh.mean(0)) ** 2, 1)))) if len(sh) > 1 else 0.0
-    add("camera", "ok" if rms <= SHAKE_WARN_PX else "warn" if rms <= SHAKE_FAIL_PX else "fail", round(rms, 2),
+    if sh is None or len(sh) < 2:
+        rms = None
+        add("camera", "warn", None, "too little static texture in view to check the camera: mark a static, "
+            "textured anchor (a tower, a wall) so camera motion can be removed")
+    else:
+        rms = float(np.sqrt(np.mean(np.sum((sh - sh.mean(0)) ** 2, 1))))
+    if rms is not None:
+        add("camera", "ok" if rms <= SHAKE_WARN_PX else "warn" if rms <= SHAKE_FAIL_PX else "fail", round(rms, 2),
         f"camera steady ({rms:.1f} px RMS)" if rms <= SHAKE_WARN_PX else
         f"picture moved {rms:.1f} px RMS: mark a static textured patch as the anchor" if rms <= SHAKE_GATE_PX else
         f"picture moved {rms:.0f} px RMS: if the cable fills the view this is the cable itself, and the "

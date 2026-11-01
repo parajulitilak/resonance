@@ -31,10 +31,37 @@ def test_approval_is_one_time_and_hash_bound(tmp_path):
     from resonance.agent import approve
     (tmp_path / "report.json").write_text(json.dumps({"timing": {"frames": 1, "fps": 240.0, "source": "t"},
                                                       "members": []}))
-    (tmp_path / "agent.json").write_text(json.dumps({"actions": {"flags": [], "reshoots": [], "report": None},
-                                                     "violations": [], "verdicts": [], "mode": "bench"}))
+    report = {"summary": "s", "members": [{"name": "r1", "status": "refused", "statement": "Refused."}], "next_steps": []}
+    verdicts = [{"id": 0, "kind": "statement", "member": "r1", "verdict": "agree", "reason": "ok"},
+                {"id": 1, "kind": "summary", "member": "summary", "verdict": "agree", "reason": "ok"}]
+    (tmp_path / "agent.json").write_text(json.dumps({"actions": {"flags": [], "reshoots": [], "report": report},
+                                                     "violations": [], "verdicts": verdicts, "mode": "bench"}))
     approve(tmp_path, "A")
     rec = json.loads((tmp_path / "approval.json").read_text())
     assert rec["by"] == "A" and len(rec["sha256"]) == 64
     with pytest.raises(RuntimeError):
         approve(tmp_path, "B")
+
+
+def test_approval_blocked_when_verification_failed_or_incomplete(tmp_path):
+    import json
+    import pytest
+    from resonance.agent import approve
+    (tmp_path / "report.json").write_text(json.dumps({"timing": {"frames": 1, "fps": 240.0, "source": "t"},
+                                                      "members": []}))
+    report = {"summary": "s", "members": [{"name": "r1", "status": "measured", "statement": "T 25.0 N."}], "next_steps": []}
+    for error, verdicts in [("ConnectionResetError: reset", []), (None, [])]:
+        (tmp_path / "agent.json").write_text(json.dumps({"actions": {"flags": [], "reshoots": [], "report": report},
+                                                         "violations": [], "verdicts": verdicts, "mode": "bench",
+                                                         "error": error}))
+        with pytest.raises(RuntimeError):
+            approve(tmp_path, "A")
+
+
+def test_missing_verdict_never_renders_as_agrees():
+    from resonance.agent import render_markdown
+    rep = {"timing": {"frames": 1, "fps": 240.0, "source": "t"}, "members": [{"name": "r1", "ladder": {}}]}
+    acts = {"report": {"summary": "s", "members": [{"name": "r1", "status": "measured", "statement": "T 25.0 N."}],
+                       "next_steps": []}, "flags": [], "reshoots": []}
+    md = render_markdown(rep, acts, [], [], "bench")
+    assert "| needs engineer |" in md and "agrees" not in md.split("## Independent")[0]

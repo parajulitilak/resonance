@@ -204,6 +204,8 @@ def run_inspector(report: dict, context: str, mode: str = "bench", provider: str
                 args = json.loads(c["function"].get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
+            if not isinstance(args, dict):  # "null" or a bare value: treat as no arguments
+                args = {}
             res = call(fn, args)
             log(f"  agent → {fn}({', '.join(f'{k}={v!r}' for k, v in args.items())[:120]})")
             msgs.append({"role": "tool", "tool_call_id": c["id"], "content": json.dumps(res, default=float)[:12000]})
@@ -250,6 +252,12 @@ def enforce_rules(report: dict, actions: dict, mode: str) -> list[dict]:
         if mode == "field" and TENSION_UNIT.search(item["statement"]):
             out.append({"member": m["name"], "rule": "absolute tension in field mode → needs engineer"})
             item["status"] = "flagged"
+        vr = m.get("visual_review") or {}
+        if vr and (vr.get("verdict") != "confirmed" or vr.get("both_supports_visible") is False) \
+                and "uncertain" not in item["statement"].lower():  # rule 9, enforced in code
+            why = "both supports are not in view" if vr.get("verdict") == "confirmed" else f"visual review: {vr.get('verdict')}"
+            item["statement"] = item["statement"].rstrip() + f" Identification of this member is uncertain ({why})."
+            out.append({"member": m["name"], "rule": "uncertain identification not stated → added by code"})
     fields = [("summary", rep.get("summary", ""))]
     fields += [(f"members.{i.get('name')}", i.get("statement", "")) for i in rep.get("members", [])]
     fields += [(f"next_steps[{k}]", t) for k, t in enumerate(rep.get("next_steps", []))]
@@ -288,6 +296,9 @@ def run_verifier(report: dict, actions: dict, provider: str = "baseten", raw_sin
     claims += [{"id": len(claims) + k, "kind": "flag", "flag_index": k, "member": f.get("name"),
                 "claim": f"[{f.get('severity')}] {f.get('finding', '')}", "status": "flag"}
                for k, f in enumerate(actions.get("flags", []))]
+    if (rep.get("summary") or "").strip():  # the summary states numbers too: it is checked like any claim
+        claims.append({"id": len(claims), "kind": "summary", "member": "summary", "claim": rep["summary"],
+                       "status": "summary"})
     if not claims:
         return []
     evidence = {"timing": report["timing"],
@@ -321,8 +332,8 @@ def run_verifier(report: dict, actions: dict, provider: str = "baseten", raw_sin
                     key = int(key)
                 if isinstance(key, int) and not isinstance(key, bool) and key in {c["id"] for c in batch}:
                     got[key] = v
-        except (RuntimeError, json.JSONDecodeError) as e:
-            errors.append(str(e))
+        except Exception as e:  # noqa: BLE001 - any failure leaves the batch unverified (fail closed)
+            errors.append(f"{type(e).__name__}: {e}")
 
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=4) as ex:
@@ -349,6 +360,10 @@ def render_markdown(report: dict, actions: dict, violations: list[dict], verdict
     rep = actions.get("report") or {"summary": "(agent did not submit a report)", "members": [], "next_steps": []}
     # a member row needs an engineer if the verifier disputes its statement or a code rule fired on it;
     # disputed flags are shown on the flag itself
+    # "agrees" only on an explicit verdict: a member with no verdict (the verifier crashed or skipped it) needs
+    # the engineer as much as a disputed one
+    agreed = {str(v.get("member", "")).lower() for v in verdicts
+              if v.get("verdict") == "agree" and v.get("kind", "statement") == "statement"}
     disputed = {str(v.get("member", "")).lower() for v in verdicts
                 if v.get("verdict") != "agree" and v.get("kind", "statement") == "statement"} | \
                {str(v.get("member", "")).lower() for v in violations}
@@ -359,7 +374,7 @@ def render_markdown(report: dict, actions: dict, violations: list[dict], verdict
                                      f"{approval['sha256'][:12]}…)" if approval else ""), "",
          f"Video: `{report.get('video', '?')}` · {report['timing']['frames']} frames at "
          f"{report['timing']['fps']:.1f} fps ({report['timing']['source']})", "",
-         "## Summary", "", rep["summary"], "", "## Members", "",
+         "## Summary", "", rep["summary"] + _summary_tag(verdicts), "", "## Members", "",
          "| Member | Status | f0 (Hz) | Modes | Statement | Verifier |", "|---|---|---|---|---|---|"]
     by = {m["name"]: m for m in report["members"]}
     for item in rep["members"]:
@@ -367,14 +382,15 @@ def render_markdown(report: dict, actions: dict, violations: list[dict], verdict
         lad = m.get("ladder", {})
         f0 = f"{lad['f0_hz']:.3f}" if lad.get("ok") else "—"
         modes = ",".join(str(x["n"]) for x in lad.get("modes", [])) if lad.get("ok") else "—"
-        ver = "needs engineer" if str(item["name"]).lower() in disputed else "agrees"
+        nm = str(item["name"]).lower()
+        ver = "agrees" if nm in agreed and nm not in disputed else "needs engineer"
         L.append(f"| {item['name']} | {item['status']} | {f0} | {modes} | {item['statement']} | {ver} |")
     if actions["flags"]:
         L += ["", "## Flags", ""]
         for k, f in enumerate(actions["flags"]):
             fv = flag_verdict.get(k)
-            tag = "" if fv is None else (" · verifier agrees" if fv["verdict"] == "agree"
-                                         else f" · **verifier disputes:** {fv['reason']}")
+            tag = " · not verified" if fv is None else (" · verifier agrees" if fv["verdict"] == "agree"
+                                                        else f" · **verifier disputes:** {fv['reason']}")
             L.append(f"- **{f.get('severity')}** · {f.get('name')}: {f.get('finding')} "
                      f"(evidence: {', '.join(f.get('evidence', []))}){tag}")
     if actions["reshoots"]:
@@ -388,6 +404,13 @@ def render_markdown(report: dict, actions: dict, violations: list[dict], verdict
     L += ["", "---", "Screening measurement from video. It does not certify any structure; "
                "an engineer must review and approve it."]
     return "\n".join(L) + "\n"
+
+
+def _summary_tag(verdicts: list[dict]) -> str:
+    v = next((x for x in verdicts if x.get("kind") == "summary"), None)
+    if v is None:
+        return " *(summary not verified: needs engineer)*"
+    return " *(verifier agrees)*" if v.get("verdict") == "agree" else f" *(**verifier disputes:** {v.get('reason')})*"
 
 
 def _evidence_hash(out: Path) -> str:
@@ -434,6 +457,13 @@ def approve(out_dir: str | Path, by: str) -> Path:
     out = Path(out_dir)
     data = json.loads((out / "agent.json").read_text())
     report = json.loads((out / "report.json").read_text())
+    if data.get("error"):
+        raise RuntimeError(f"the inspection did not finish ({data['error']}): run it again before signing")
+    rep = data["actions"].get("report") or {}
+    n_claims = len(rep.get("members", [])) + len(data["actions"].get("flags", [])) + \
+        (1 if (rep.get("summary") or "").strip() else 0)
+    if not rep or len(data.get("verdicts", [])) < n_claims:
+        raise RuntimeError("not every claim was independently verified: run the inspection again before signing")
     if (out / "approval.json").exists():
         prior = json.loads((out / "approval.json").read_text())
         raise RuntimeError(f"already approved by {prior['by']} on {prior['at']}; re-run the inspection "

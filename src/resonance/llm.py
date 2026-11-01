@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -29,11 +30,16 @@ def load_env(path: str | Path = ".env") -> None:
             os.environ[m.group(1)] = m.group(2).strip()
 
 
+CALL_GATE = None  # set by a public server: a function that charges one call to the budget, False when spent
+
+
 def chat(messages: list[dict], tools: list[dict] | None = None, provider: str = "baseten",
          model: str | None = None, max_tokens: int = 4000, retries: int = 3, timeout: int = 180,
          tool_choice: dict | str | None = None) -> dict:
     """Return {"message": ..., "usage": ..., "model": ...}; raises on persistent failure."""
     load_env()
+    if CALL_GATE is not None and not CALL_GATE():
+        raise RuntimeError("model call limit reached for this hour on the public demo")
     cfg = PROVIDERS[provider]
     key = os.environ.get(cfg["key"], "")
     if not key:
@@ -56,7 +62,8 @@ def chat(messages: list[dict], tools: list[dict] | None = None, provider: str = 
             last = f"HTTP {e.code}: {e.read()[:300]!r}"
             if e.code not in (408, 429, 500, 502, 503, 504):
                 break
-        except (urllib.error.URLError, TimeoutError) as e:
-            last = str(e)
+        except (OSError, ValueError, KeyError, IndexError, TypeError, http.client.HTTPException) as e:
+            # dropped connections, truncated or malformed answers: retried, then reported as one error type
+            last = f"{type(e).__name__}: {e}"
         time.sleep(2 * (attempt + 1))
     raise RuntimeError(f"{provider} chat failed: {last}")
