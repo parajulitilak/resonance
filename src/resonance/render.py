@@ -24,7 +24,7 @@ MODEL = (86, 180, 233)        # the fitted ladder (Okabe-Ito sky blue)
 TEAL = (38, 196, 170)         # verified
 AMBER = (230, 159, 0)         # provisional (Okabe-Ito orange)
 RED = (255, 106, 61)          # refused (vermilion)
-STATUS_COLOUR = {"verified": TEAL, "provisional": AMBER, "refused": RED}
+STATUS_COLOUR = {"verified": TEAL, "provisional": AMBER, "refused": RED, "frequency": MODEL}
 
 
 def _font(size: int, bold: bool = False):
@@ -144,7 +144,7 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
             for m in members:
                 lk = locks[m.name]["lock_frame"]
                 st = by[m.name]["ladder"]["status"]
-                locked = lk is not None and k + 1 >= lk
+                locked = (lk is not None and k + 1 >= lk) or (last and st != "refused")
                 col = STATUS_COLOUR[st] if locked or (last and st == "refused") else DATA
                 u = tr.disp[m.name][k] - tr.disp[m.name][: max(k, 1)].mean(0)
                 pts = []
@@ -170,7 +170,8 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
                 st = lad["status"]
                 cur = state_at(m.name, k)
                 lk = locks[m.name]["lock_frame"]
-                locked = lk is not None and k + 1 >= lk
+                # final verdict at the end even without a running lock (e.g. a single mode identified by shape)
+                locked = (lk is not None and k + 1 >= lk) or (last and st != "refused")
                 y0 = 150 + i * row_h
                 gx0, gx1, gy0, gy1 = px + 150, px + pw - 250, y0 + 18, y0 + row_h - 34
                 d.text((px, y0 + 18), m.name, font=f_name, fill=INK)
@@ -190,7 +191,7 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
                         d.text((x - 8, gy1 + 4), f"{hz:g}", font=f_small, fill=DIM)
                 d.text((gx1 - d.textlength("Hz", font=f_small), gy1 + 4), "Hz", font=f_small, fill=DIM)
                 # rungs the running fit has matched so far (model colour, dashed)
-                if cur and cur[1] != "refused" and np.isfinite(cur[2]):
+                if (locked and np.isfinite(lad["f0_hz"])) or (cur and cur[1] != "refused" and np.isfinite(cur[2])):
                     f0c, matched = (lad["f0_hz"], [mm["n"] for mm in lad["modes"]]) if locked else (cur[2], cur[3])
                     bb = lad["b"] if locked else 0.0
                     for nn in matched:
