@@ -49,6 +49,8 @@ _calls: list[float] = []
 _client_calls: dict[tuple, list[float]] = {}
 _lock = threading.Lock()
 PER_CLIENT_PER_HOUR = 6              # reviews and inspections each, per client address
+PER_CLIENT_AUTOPILOT = 2             # field-assistant jobs per client address per hour
+MAX_AUTOPILOT = 1                    # field-assistant jobs at once (public mode); separate from analysis slots
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$")
 
 
@@ -65,14 +67,14 @@ def _model_call_allowed() -> bool:
         return True
 
 
-def _client_allowed(addr: str, kind: str) -> bool:
+def _client_allowed(addr: str, kind: str, limit: int | None = None) -> bool:
     """Public mode: one visitor cannot spend everyone's hourly budget."""
     if not PUBLIC:
         return True
     with _lock:
         now = time.time()
         log = [t for t in _client_calls.get((addr, kind), []) if now - t < 3600]
-        if len(log) >= PER_CLIENT_PER_HOUR:
+        if len(log) >= (limit or PER_CLIENT_PER_HOUR):
             _client_calls[(addr, kind)] = log
             return False
         _client_calls[(addr, kind)] = log + [now]
@@ -98,9 +100,9 @@ def _looks_like_video(path: Path) -> bool:
             or (head[:4] == b"RIFF" and head[8:12] == b"AVI "))
 
 
-def _running(key: str) -> int:
-    busy = {"stage": ("queued", "tracking", "analysing", "rendering", "autopilot"), "inspect_stage": ("running",)}[key]
-    return sum(j.get(key) in busy for j in JOBS.values())
+def _running(key: str, states: tuple | None = None) -> int:
+    busy = states or {"stage": ("queued", "tracking", "analysing", "rendering"), "inspect_stage": ("running",)}[key]
+    return sum(j.get(key) in busy for j in list(JOBS.values()))  # a snapshot: job threads add entries
 
 
 def _housekeep() -> None:
@@ -108,7 +110,8 @@ def _housekeep() -> None:
     being measured or uploaded in the last 30 minutes are never removed."""
     if not PUBLIC:
         return
-    busy = {j.get("video") for j in JOBS.values() if j.get("stage") in ("queued", "tracking", "analysing", "rendering")}
+    busy = {j.get("video") for j in list(JOBS.values())
+            if j.get("stage") in ("queued", "tracking", "analysing", "rendering", "autopilot")}
     fresh = time.time() - 1800
     ups = sorted((p for p in UPLOADS.glob("*") if p.is_file() and not p.name.startswith("sample-")
                   and p.name not in busy and p.stat().st_mtime < fresh), key=lambda p: p.stat().st_mtime)
@@ -123,9 +126,20 @@ def _housekeep() -> None:
         JOBS.pop(d.name, None)
 
 
-def _review_key(video: str, p0, p1) -> tuple:
+def _pos_key(p0, p1) -> tuple:
     """Verdicts follow the candidate's position, not its (editable) name."""
-    return (video, tuple(round(float(v)) for v in p0), tuple(round(float(v)) for v in p1))
+    return tuple(round(float(v)) for v in p0), tuple(round(float(v)) for v in p1)
+
+
+def _review_key(client: str, video: str, p0, p1) -> tuple:
+    """Per visitor: another visitor's review of the same clip cannot change this visitor's report."""
+    return (client, video) + _pos_key(p0, p1)
+
+
+def _client(h: BaseHTTPRequestHandler) -> str:
+    """The visitor's address; behind a proxy, the address the proxy appended last."""
+    fwd = h.headers.get("X-Forwarded-For", "")
+    return fwd.split(",")[-1].strip() if fwd.strip() else h.client_address[0]
 
 
 def _sha(path: Path) -> str:
@@ -225,7 +239,8 @@ def _file(h: BaseHTTPRequestHandler, path: Path, ctype: str) -> None:
             left -= len(chunk)
 
 
-def _run_job(job_id: str, video: Path, spec: dict) -> None:
+def _run_job(job_id: str, video: Path, spec: dict, reviews: dict | None = None) -> None:
+    """`reviews`: verdicts made by this server, keyed by _pos_key; anything a client sends is ignored."""
     job = JOBS[job_id]
     out = RUNS / job_id
     try:
@@ -260,7 +275,7 @@ def _run_job(job_id: str, video: Path, spec: dict) -> None:
         rep = analyze_tracking(tr, picture_motion_px=None if anchor else picture_motion(str(video), members))
         rep["video"] = str(video)
         for mem, src, e in zip(members, spec["members"], rep["members"]):  # the server's own verdicts only
-            r = REVIEWS.get(_review_key(video.name, mem.p0, mem.p1))
+            r = (reviews or {}).get(_pos_key(mem.p0, mem.p1))
             if r:
                 e["visual_review"] = {**r, "name": mem.name}
             elif src.get("source") == "sam":  # proposed by SAM but never reviewed by this server
@@ -335,16 +350,15 @@ def _run_autopilot(job_id: str, vid: Path, notes: str) -> None:
         if frame is None:
             frame = next(iter(read_frames(str(vid))))
         ms = [Member(f"c{k}", tuple(c["p0"]), tuple(c["p1"])) for k, c in enumerate(cands)]
-        res = review(frame, ms, context=notes)
-        for m, r in zip(ms, res):
-            REVIEWS[_review_key(vid.name, m.p0, m.p1)] = r
-        return res
+        return review(frame, ms, context=notes)
 
     def measure(members: list[dict]) -> dict:
         run_id = time.strftime("%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
         JOBS[run_id] = {"id": run_id, "stage": "queued", "video": vid.name}
         job["measuring"] = run_id
-        _run_job(run_id, vid, {"members": members, "site_notes": notes})
+        verdicts = {_pos_key(m["p0"], m["p1"]): m["review"] for m in members if m.get("review")}  # made in this job
+        _run_job(run_id, vid, {"members": members, "site_notes": notes}, verdicts)
+        job.pop("measuring", None)
         r = JOBS[run_id]
         if r.get("stage") != "done":
             return {"run": run_id, "error": r.get("error", "measurement failed")}
@@ -361,12 +375,15 @@ def _run_autopilot(job_id: str, vid: Path, notes: str) -> None:
     try:
         tb = Toolbox(check=lambda: check(str(vid)), find=find, review=do_review, measure=measure, notes=notes)
         res = run_autopilot(tb, on_step=on_step)
-        for rid in res["runs"]:  # kept with each run, so the replay shows how it was made
+        for rid in res["runs"]:  # kept with each run (even if the model failed later), so the replay shows how it was made
             if (RUNS / rid).exists():
                 (RUNS / rid / "autopilot.json").write_text(json.dumps(res, default=float, indent=1))
             if rid in JOBS:
                 JOBS[rid]["autopilot"] = res
-        job.update(stage="done", run=res["run"], runs=res["runs"], summary=res["summary"])
+        if res["error"] and not res["summary"]:
+            job.update(stage="error", error=res["error"], run=res["run"], runs=res["runs"])
+        else:
+            job.update(stage="done", run=res["run"], runs=res["runs"], summary=res["summary"])
     except Exception as e:  # noqa: BLE001
         job.update(stage="error", error=f"{type(e).__name__}: {e}")
 
@@ -547,8 +564,10 @@ class Handler(BaseHTTPRequestHandler):
                 return _json(self, {"error": "the demo server is busy measuring other clips: try again in a minute"}, 429)
             _housekeep()
             job_id = time.strftime("%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
-            JOBS[job_id] = {"id": job_id, "stage": "queued", "video": body["video"]}
-            threading.Thread(target=_run_job, args=(job_id, video, body), daemon=True).start()
+            JOBS[job_id] = {"id": job_id, "stage": "queued", "video": video.name}
+            who = _client(self)
+            mine = {k[2:]: v for k, v in list(REVIEWS.items()) if k[0] == who and k[1] == video.name}
+            threading.Thread(target=_run_job, args=(job_id, video, body, mine), daemon=True).start()
             return _json(self, {"job": job_id})
         if u.path == "/api/detect":
             vid = _video(body.get("video"))
@@ -564,17 +583,17 @@ class Handler(BaseHTTPRequestHandler):
             vid = _video(body.get("video"))
             if not vid:
                 return _json(self, {"error": "unknown clip"}, 404)
-            if not _client_allowed(self.client_address[0], "autopilot"):
+            if PUBLIC and _running("stage", ("autopilot",)) >= MAX_AUTOPILOT:  # checked before charging the visitor
+                return _json(self, {"error": "the field assistant is busy with another visitor: try again in a few minutes"}, 429)
+            if not _client_allowed(_client(self), "autopilot", PER_CLIENT_AUTOPILOT):
                 return _json(self, {"error": "field-assistant limit for this hour reached on the public demo"}, 429)
-            if PUBLIC and _running("stage") >= MAX_RUNNING:
-                return _json(self, {"error": "the demo server is busy: try again in a minute"}, 429)
             job_id = "auto-" + time.strftime("%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
             JOBS[job_id] = {"id": job_id, "stage": "autopilot", "steps": [], "video": vid.name}
             threading.Thread(target=_run_autopilot, args=(job_id, vid, str(body.get("notes", ""))[:2000]),
                              daemon=True).start()
             return _json(self, {"job": job_id})
         if u.path == "/api/review":
-            if not _client_allowed(self.client_address[0], "review"):
+            if not _client_allowed(_client(self), "review"):
                 return _json(self, {"error": "review limit for this hour reached on the public demo"}, 429)
             vid = _video(body.get("video"))
             if not vid or not isinstance(body.get("members"), list):
@@ -588,8 +607,9 @@ class Handler(BaseHTTPRequestHandler):
                 ms = [Member(str(m["name"])[:40], tuple(float(v) for v in m["p0"])[:2],
                              tuple(float(v) for v in m["p1"])[:2]) for m in body["members"]]
                 res = review(frame, ms, context=str(body.get("context", ""))[:1000])
+                who = _client(self)
                 for m, r in zip(ms, res):  # kept on the server: a measurement only trusts verdicts it made itself
-                    REVIEWS[_review_key(vid.name, m.p0, m.p1)] = r
+                    REVIEWS[_review_key(who, vid.name, m.p0, m.p1)] = r
                 return _json(self, {"reviews": res})
             except Exception as e:  # noqa: BLE001
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 502)
@@ -604,7 +624,7 @@ class Handler(BaseHTTPRequestHandler):
                 return _json(self, {"error": "an inspection of this run is already running"}, 409)
             if PUBLIC and _running("inspect_stage") >= MAX_RUNNING:
                 return _json(self, {"error": "the demo server is busy: try again in a minute"}, 429)
-            if not _client_allowed(self.client_address[0], "inspect"):
+            if not _client_allowed(_client(self), "inspect"):
                 return _json(self, {"error": "inspection limit for this hour reached on the public demo"}, 429)
             mode = "field" if body.get("mode") == "field" else "bench"
             job["inspect_stage"] = "running"

@@ -286,7 +286,12 @@ $('#autoBtn').onclick = async () => {
   catch (e) { r = {error: String(e)}; }
   if (r.error) { $('#autolog').textContent = r.error; $('#autoBtn').disabled = false; return; }
   const tick = async () => {
-    const j = await (await fetch('/api/jobs/' + encodeURIComponent(r.job))).json();
+    let j;
+    try { j = await (await fetch('/api/jobs/' + encodeURIComponent(r.job))).json(); } catch (e) { j = {error: String(e)}; }
+    if (!j.stage) {  // the job is gone (server restarted) or the request failed: stop polling
+      $('#autolog').innerHTML += `<div class="card bad">${esc(j.error || 'the field assistant job was lost')}</div>`;
+      $('#autoBtn').disabled = false; return;
+    }
     $('#autolog').innerHTML = `<div class="card">${(j.steps || []).map(stepLine).join('')}` +
       (j.stage === 'autopilot' ? `<div class="muted">${j.measuring ? 'measuring…' : 'thinking…'}</div>` : '') + '</div>';
     if (j.stage === 'done') {
