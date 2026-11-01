@@ -72,9 +72,10 @@ def _run_job(job_id: str, video: Path, spec: dict) -> None:
         members = []
         for k, m in enumerate(spec["members"]):
             tr_range = tuple(m["tension_range"]) if m.get("tension_range") else None
+            f_range = tuple(m["f0_range"]) if m.get("f0_range") else None
             members.append(Member(m.get("name") or f"m{k + 1}", tuple(m["p0"]), tuple(m["p1"]),
                                   half_width=float(m.get("half_width", 10)), length_m=m.get("length_m"),
-                                  mass_per_m=m.get("mass_per_m"), tension_range=tr_range))
+                                  mass_per_m=m.get("mass_per_m"), tension_range=tr_range, f0_range=f_range))
         anchor = tuple(spec["anchor"]) if spec.get("anchor") else None
         tr = track(str(video), members, anchor=anchor, capture_fps=spec.get("capture_fps"))
         job.update(stage="analysing")

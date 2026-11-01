@@ -116,7 +116,7 @@
     <input id="notes" placeholder="What was filmed? e.g. hangers of a suspension footbridge, steel wire ropes" style="width:100%;margin-bottom:10px">
     <p class="muted">Or click the two ends of each cable on the frame. Length, mass per metre and a rough tension range
       unlock tension; without them you still get frequencies and change detection.</p>
-    <table id="members"><thead><tr><th></th><th>Cable</th><th>L (m)</th><th>m (kg/m)</th><th>T range (N)</th><th></th></tr></thead><tbody></tbody></table>
+    <table id="members"><thead><tr><th></th><th>Cable</th><th>L (m)</th><th>m (kg/m)</th><th title="tension range in N, or f 4-6 for Hz">Prior (N or f Hz)</th><th></th></tr></thead><tbody></tbody></table>
     <div id="reviewinfo" class="muted" style="margin-top:6px"></div>
     <div class="row" style="margin-top:14px">
       <button id="analyze" disabled>Measure</button>
@@ -196,12 +196,15 @@ function renderMembers() {
           title="${esc(rv.reason)}">${rv.verdict === 'confirmed' ? '✓' : rv.verdict === 'rejected' ? '✗' : '?'} ${esc(rv.what || rv.verdict)}</div>` : ''}</td>
       <td><input value="${m.length_m ?? ''}" data-k="length_m" placeholder="1.80"></td>
       <td><input value="${m.mass_per_m ?? ''}" data-k="mass_per_m" placeholder="0.022"></td>
-      <td><input value="${m.tension_range ? m.tension_range.join('-') : ''}" data-k="tension_range" placeholder="5-300"></td>
+      <td><input value="${m.tension_range ? m.tension_range.join('-') : m.f0_range ? 'f ' + m.f0_range.join('-') : ''}" data-k="tension_range" placeholder="5-300" title="tension range in N, or 'f 4-6' for a fundamental range in Hz"></td>
       <td><button class="ghost" data-del="${i}">✕</button></td>`;
     tr.querySelectorAll('input').forEach(inp => inp.onchange = () => {
       const k = inp.dataset.k, v = inp.value.trim();
       if (k === 'name') m.name = v || m.name;
-      else if (k === 'tension_range') m.tension_range = v ? v.split('-').map(Number) : null;
+      else if (k === 'tension_range') {  // "5-300" is a tension range in N; "f 4-6" a fundamental range in Hz
+        const f = /^f\s*/i.test(v), r = v.replace(/^f\s*/i, '').split('-').map(Number);
+        m.tension_range = v && !f ? r : null; m.f0_range = v && f ? r : null;
+      }
       else m[k] = v ? Number(v) : null;
       draw();
     });

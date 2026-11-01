@@ -30,7 +30,8 @@ def load_env(path: str | Path = ".env") -> None:
 
 
 def chat(messages: list[dict], tools: list[dict] | None = None, provider: str = "baseten",
-         model: str | None = None, max_tokens: int = 4000, retries: int = 3, timeout: int = 180) -> dict:
+         model: str | None = None, max_tokens: int = 4000, retries: int = 3, timeout: int = 180,
+         tool_choice: dict | str | None = None) -> dict:
     """Return {"message": ..., "usage": ..., "model": ...}; raises on persistent failure."""
     load_env()
     cfg = PROVIDERS[provider]
@@ -40,6 +41,8 @@ def chat(messages: list[dict], tools: list[dict] | None = None, provider: str = 
     body = {"model": model or cfg["model"], "messages": messages, "max_tokens": max_tokens}
     if tools:
         body["tools"] = tools
+        if tool_choice:
+            body["tool_choice"] = tool_choice
     data = json.dumps(body).encode()
     last = None
     for attempt in range(retries):
