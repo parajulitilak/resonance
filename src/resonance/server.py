@@ -233,8 +233,8 @@ class Handler(BaseHTTPRequestHandler):
             parts = Path(u.path).parts  # /, runs, id, file
             if len(parts) == 4:
                 p = RUNS / Path(parts[2]).name / Path(parts[3]).name
-                ctype = "video/mp4" if p.suffix == ".mp4" else "application/json" if p.suffix == ".json" \
-                    else "text/markdown; charset=utf-8"
+                ctype = {".mp4": "video/mp4", ".json": "application/json", ".jpg": "image/jpeg"}.get(
+                    p.suffix, "text/markdown; charset=utf-8")
                 return _file(self, p, ctype)
         self.send_error(404)
 

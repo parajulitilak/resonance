@@ -99,8 +99,12 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
     t = tr.t
     fs = tr.timebase.fps
     step = max(1, int(round(fs * speed / out_fps)))
-    f_max = f_max or min(fs / 2, 120.0)
     by = {m["name"]: m for m in report["members"]}
+    # wide enough to show every matched rung (a cello ladder runs to kHz), at least 120 Hz, never past Nyquist
+    top = max([r["f_hz"] for m in report["members"] for r in m["ladder"].get("modes", [])] or [0.0])
+    f_max = f_max or min(fs / 2, max(120.0, 1.1 * top))
+    if report.get("camera_gate"):  # the camera moved: magnifying its motion would only draw noise
+        magnify = 1.0
     members = tr.members
     locks = running_locks(tr, report)
 
@@ -150,8 +154,9 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
                     pts.append((x * scale, y * scale + oy))
                 d.line(pts, fill=col + (240,), width=6)
                 d.text((m.p0[0] * scale - 18, m.p0[1] * scale - 34 + oy), m.name, font=f_small, fill=INK)
-            d.rounded_rectangle([16, OUT_H - 52, 210, OUT_H - 16], radius=8, fill=(0, 0, 0, 150))
-            d.text((28, OUT_H - 47), f"motion ×{magnify:.0f}", font=f_sub, fill=INK)
+            d.rounded_rectangle([16, OUT_H - 52, 210 if magnify > 1 else 360, OUT_H - 16], radius=8, fill=(0, 0, 0, 150))
+            d.text((28, OUT_H - 47), f"motion ×{magnify:.0f}" if magnify > 1 else "camera moved: not magnified",
+                   font=f_sub, fill=INK)
 
             d.rectangle([px - 20, 0, OUT_W, OUT_H], fill=PANEL)
             d.text((px, 28), title, font=f_title, fill=INK)
@@ -181,10 +186,9 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
                 ticks = [round(k * tstep, 6) for k in range(int(f_max / tstep) + 1)]
                 for hz in ticks:
                     x = gx0 + hz / f_max * (gx1 - gx0)
-                    lab = f"{hz:g}"
-                    label = f"{lab} Hz" if hz == ticks[-1] else lab
-                    d.text((x - (d.textlength(label, font=f_small) if hz == ticks[-1] else 8), gy1 + 4), label,
-                           font=f_small, fill=DIM)
+                    if x + 40 < gx1 - d.textlength("Hz", font=f_small):  # numbers clear of the unit at the end
+                        d.text((x - 8, gy1 + 4), f"{hz:g}", font=f_small, fill=DIM)
+                d.text((gx1 - d.textlength("Hz", font=f_small), gy1 + 4), "Hz", font=f_small, fill=DIM)
                 # rungs the running fit has matched so far (model colour, dashed)
                 if cur and cur[1] != "refused" and np.isfinite(cur[2]):
                     f0c, matched = (lad["f0_hz"], [mm["n"] for mm in lad["modes"]]) if locked else (cur[2], cur[3])
@@ -226,4 +230,5 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
             if last:
                 for _ in range(hold):
                     vw_.write(arr)
+                canvas.save(out.with_suffix(".jpg"), quality=88)  # poster: the final verdicts
     return out

@@ -322,7 +322,7 @@ async function poll() {
   $('#bar').style.width = (STAGES[j.stage] || 10) + '%';
   $('#status').textContent = j.stage === 'error' ? 'Error: ' + j.error : 'Stage: ' + j.stage;
   if (j.report && !report) showReport(j.report);
-  if (j.stage === 'done') { if (j.hero) $('#hero').src = j.hero; $('#analyze').disabled = false; showAgent(j); return; }
+  if (j.stage === 'done') { if (j.hero) $('#hero').poster = j.hero.replace('.mp4', '.jpg'); $('#hero').src = j.hero; $('#analyze').disabled = false; showAgent(j); return; }
   if (j.stage === 'error') { $('#analyze').disabled = false; return; }
   setTimeout(poll, 800);
 }
@@ -481,7 +481,7 @@ if (params.get('run')) {
   fetch('/api/jobs/' + job).then(r => r.json()).then(j => {
     if (j.error) return;
     $('#clipsec').hidden = true; $('#cablesec').hidden = true;
-    showReport(j.report); if (j.hero) $('#hero').src = j.hero; showAgent(j);
+    showReport(j.report); if (j.hero) $('#hero').poster = j.hero.replace('.mp4', '.jpg'); $('#hero').src = j.hero; showAgent(j);
   });
 }
 window.onresize = () => video && draw();
