@@ -403,7 +403,9 @@ def inspect(report: dict, context: str, out_dir: str | Path, mode: str = "bench"
     except Exception as e:  # noqa: BLE001 - keep whatever was paid for, then report the failure
         error = f"{type(e).__name__}: {e}"
         violations = violations or enforce_rules(report, actions, mode)
-    (out / "agent.json").write_text(json.dumps({"actions": actions, "violations": violations,
+    from .llm import PROVIDERS
+    models = {"inspector": PROVIDERS[inspector]["model"], "verifier": PROVIDERS[verifier]["model"]}
+    (out / "agent.json").write_text(json.dumps({"actions": actions, "violations": violations, "models": models,
                                                 "verdicts": verdicts, "verifier_raw": raw, "mode": mode,
                                                 "error": error,
                                                 "seconds": time.time() - t0}, indent=2, default=float))

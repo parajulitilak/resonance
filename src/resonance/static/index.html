@@ -84,7 +84,7 @@
 <header>
   <h1>RESONANCE</h1>
   <p>Cable tension from a phone video · SAM 3.1 places the sensors · physics checks itself · an engineer signs</p>
-  <p style="margin-left:auto;font-size:12px">Built with Muse Spark Open · Muse Spark · SAM 3.1 · screening only, not a safety certificate</p>
+  <p style="margin-left:auto;font-size:12px">Built with Muse Spark Open · SAM 3.1 · screening only, not a safety certificate</p>
 </header>
 <main>
   <section id="clipsec">
@@ -151,8 +151,8 @@
     </div>
     <textarea id="context" placeholder="Field notes: what was filmed, rope type and weighed mass per metre, lengths, reference masses or design values…"></textarea>
     <div class="cols" style="margin-top:14px">
-      <div><div class="muted" style="margin-bottom:6px">Agent tool calls (Muse Spark)</div><div id="timeline"></div></div>
-      <div><div class="muted" style="margin-bottom:6px">Report · each claim checked by Muse Spark Open</div><div id="claims"></div></div>
+      <div><div class="muted" style="margin-bottom:6px" id="inspector-label">Agent tool calls</div><div id="timeline"></div></div>
+      <div><div class="muted" style="margin-bottom:6px" id="verifier-label">Report · each claim checked by an independent verifier</div><div id="claims"></div></div>
     </div>
     <div id="signcard"></div>
   </section>
@@ -372,8 +372,12 @@ $('#compare').onclick = async () => {
   });
 };
 
+const MODEL_NAMES = {'meta-models/muse-spark-open-1026': 'Muse Spark Open', 'muse-spark-1.3': 'Muse Spark'};
 function showAgent(j) {
   const a = j.agent; if (!a) { $('#signcard').innerHTML = ''; return; }
+  const nm = id => MODEL_NAMES[id] || id || 'unknown model';
+  if (a.models) { $('#inspector-label').textContent = `Agent tool calls (${nm(a.models.inspector)})`;
+    $('#verifier-label').textContent = `Report · each claim checked by a separate ${nm(a.models.verifier)} call`; }
   const calls = (a.actions.transcript || []).flatMap(t => t.tool_calls || []);
   $('#timeline').innerHTML = calls.map(c => {
     let args = ''; try { const o = JSON.parse(c.arguments || '{}'); args = o.name ? JSON.stringify(o.name) : ''; } catch (e) {}
@@ -383,7 +387,7 @@ function showAgent(j) {
   const rep = a.actions.report || {members: [], summary: ''};
   const claimHtml = rep.members.map((it, i) => {
     const v = verd.find(x => x.kind === 'statement' && x.id === i);
-    const badge = v ? (v.verdict === 'agree' ? '<span class="badge agree">Spark Open agrees</span>'
+    const badge = v ? (v.verdict === 'agree' ? '<span class="badge agree">verifier agrees</span>'
                                              : `<span class="badge dispute" title="${esc(v.reason)}">disputes → needs engineer</span>`) : '';
     return `<div class="card"><b>${esc(it.name)}</b> <span class="chip ${it.status === 'refused' ? 'refused' : it.status === 'flagged' ? 'provisional' : 'verified'}">${esc(it.status)}</span>${badge}
       <div style="margin-top:4px">${esc(it.statement)}</div>
@@ -413,7 +417,7 @@ function showAgent(j) {
 }
 
 $('#inspect').onclick = async () => {
-  $('#inspect').disabled = true; $('#istatus').textContent = 'Muse Spark is inspecting; Muse Spark Open will verify…';
+  $('#inspect').disabled = true; $('#istatus').textContent = 'The inspection agent is working; an independent verifier will check every claim…';
   await fetch(`/api/jobs/${job}/inspect`, {method:'POST', body: JSON.stringify({context: $('#context').value,
     mode: $('#mode').value, baseline: $('#baseline').value || null})});
   const tick = async () => {

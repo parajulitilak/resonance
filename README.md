@@ -1,10 +1,10 @@
 # Resonance
 
-Cable tension and vibration from a phone video. SAM 3.1 places the sensors, physics checks itself, and a Muse Spark agent writes the report an engineer signs off.
+Cable tension and vibration from a phone video. SAM 3.1 places the sensors, Muse Spark Open checks what SAM found, physics checks itself, and a Muse Spark Open agent writes the report an engineer signs off.
 
 Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026). Everything in this repository was written during the event.
 
-Built with Muse Spark Open, Muse Spark and SAM 3.1 (Meta). Screening tool: it does not certify structures; an engineer signs every report.
+Built with Muse Spark Open and SAM 3.1 (Meta). Screening tool: it does not certify structures; an engineer signs every report.
 
 ## How it works
 
@@ -13,7 +13,7 @@ Built with Muse Spark Open, Muse Spark and SAM 3.1 (Meta). Screening tool: it do
 3. **Spectrum.** Displacement from all stations is combined into one spectrum; peaks are found against a running noise floor.
 4. **Self-checks.** A taut cable rings at `f_n = n f0 sqrt(1 + B n^2)`. A result is *verified* only if the strong peaks sit on one such ladder, the fundamental's mode shape has no interior node (and the 2nd has one), the frame rate is high enough for a coarse frequency prior (the alias guard), and the frame timing is steady. Otherwise it is *provisional* (labelled, with a re-shoot request) or *refused* with the reason.
 5. **Physics.** Taut string with pinned ends: `T = 4 m L^2 f0^2`, with propagated uncertainty and a pinned/clamped bracket when end fixity matters. Members whose bending stiffness is significant (`xi < 10`) get relative comparisons only.
-6. **Agent.** A Muse Spark inspector writes the report from tool calls; code enforces the rules (no numbers on refused members, provisional labelled, no "safe", no absolute field tension); Muse Spark Open independently verifies every claim and fails closed; an engineer signs off, bound to a hash of the evidence.
+6. **Agent.** An inspector agent (Muse Spark Open on Baseten; Muse Spark on the Meta Model API is a drop-in provider) writes the report from tool calls; code enforces the rules (no numbers on refused members, provisional labelled, no "safe", no absolute field tension); a separate Muse Spark Open call, given only the evidence and the field notes, verifies every claim and fails closed; an engineer signs off, bound to a hash of the evidence.
 7. **Field mode.** Main-cable sag from the fitted curvature and the sway frequency `sqrt(g / 8b)` are two independent readings of the same cable.
 
 ## Status
