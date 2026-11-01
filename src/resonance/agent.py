@@ -34,7 +34,8 @@ Rules:
 inside the sentence); list the fields you used in each member's `evidence` array (for example `ladder.f0_hz`).
 2. `ladder.status` is verified, provisional or refused. Provisional members (only two harmonics, at an \
 exact 2:1 ratio) may be reported, but the statement must contain the word "provisional" and you must also \
-request a re-shoot. Refused members get no frequency or tension claim; request a re-shoot with concrete instructions (frame rate, distance, viewing angle, how to \
+request a re-shoot. Refused members get no frequency or tension claim, and their statements contain no number with a unit \
+of Hz or N at all (not even peak frequencies); explain the refusal in words and request a re-shoot with concrete instructions (frame rate, distance, viewing angle, how to \
 excite the member, lighting), based on the refusal reasons.
 3. In field mode, never state the absolute tension of a member. Compare members with each other and with \
 design values given in the context, and flag outliers for inspection.
@@ -296,30 +297,41 @@ def run_verifier(report: dict, actions: dict, provider: str = "baseten", raw_sin
     if baseline:
         from .fingerprint import diff
         evidence["changes_since_baseline"] = diff(baseline, report)["members"]
-    msg = [{"role": "system", "content": VERIFIER_SYSTEM},
-           {"role": "user", "content": "FIELD NOTES:\n<field_notes>\n" + context.replace("</field_notes>", "")[:4000] +
-                                       "\n</field_notes>\n\nEVIDENCE:\n" + json.dumps(evidence, default=float)[:60000] +
-                                       "\n\nCLAIMS:\n" + json.dumps([{k: c[k] for k in ("id", "member", "claim")}
-                                                                      for c in claims])}]
+    head = ("FIELD NOTES:\n<field_notes>\n" + context.replace("</field_notes>", "")[:4000] +
+            "\n</field_notes>\n\nEVIDENCE:\n" + json.dumps(evidence, default=float)[:60000] + "\n\nCLAIMS:\n")
+    msg = [{"role": "system", "content": VERIFIER_SYSTEM}]
     got: dict[int, dict] = {}
-    text = ""
-    try:
-        r = chat(msg, provider=provider, max_tokens=6000)
-        text = r["message"].get("content") or ""
-        mm = re.search(r"\[.*\]", text, re.S)
-        for v in json.loads(mm.group(0)) if mm else []:
-            if not isinstance(v, dict):
-                continue
-            key = v.get("id", v.get("claim_id"))
-            if isinstance(key, str) and key.strip().isdigit():
-                key = int(key)
-            if isinstance(key, int) and not isinstance(key, bool):
-                got[key] = v
-    except (RuntimeError, json.JSONDecodeError) as e:
-        got = {}
-        err = str(e)
-    else:
-        err = "no verdict returned for this claim"
+    texts: list[str] = []
+    errors: list[str] = []
+
+    def verify(batch: list[dict]) -> None:
+        """One call per batch: long reports overran a single answer (the model reasons before it replies)."""
+        m = [msg[0], {"role": "user", "content": head + json.dumps([{k: c[k] for k in ("id", "member", "claim")}
+                                                                    for c in batch])}]
+        try:
+            r = chat(m, provider=provider, max_tokens=12000)
+            text = r["message"].get("content") or ""
+            texts.append(text)
+            mm = re.search(r"\[.*\]", text, re.S)
+            for v in json.loads(mm.group(0)) if mm else []:
+                if not isinstance(v, dict):
+                    continue
+                key = v.get("id", v.get("claim_id"))
+                if isinstance(key, str) and key.strip().isdigit():
+                    key = int(key)
+                if isinstance(key, int) and not isinstance(key, bool) and key in {c["id"] for c in batch}:
+                    got[key] = v
+        except (RuntimeError, json.JSONDecodeError) as e:
+            errors.append(str(e))
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        list(ex.map(verify, [claims[i:i + 6] for i in range(0, len(claims), 6)]))
+    missing = [c for c in claims if c["id"] not in got]
+    if missing:  # one more try for claims a batch left unanswered; still unanswered → disagreement (fail closed)
+        verify(missing[:12])
+    text = "\n".join(texts)
+    err = errors[0] if errors else "no verdict returned for this claim"
     out = []
     for c in claims:
         v = got.get(c["id"])

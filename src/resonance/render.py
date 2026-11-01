@@ -102,7 +102,6 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
     f_max = f_max or min(fs / 2, 120.0)
     by = {m["name"]: m for m in report["members"]}
     members = tr.members
-    n = len(members)
     locks = running_locks(tr, report)
 
     def state_at(name: str, k: int):
@@ -120,7 +119,11 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
     oy = (OUT_H - vid_h) // 2
     px = vid_w + 40
     pw = OUT_W - px - 40
-    row_h = min((OUT_H - 170) / n, 300.0)   # a single cable shouldn't become a tall, thin strip
+    # at most six rows in the panel (measured members first); the rest are summarised in one line
+    rank = {"verified": 0, "provisional": 1, "frequency": 2, "refused": 3}
+    panel = sorted(members, key=lambda m: rank.get(by[m.name]["ladder"]["status"], 4))[:6]
+    hidden = [m for m in members if m not in panel]
+    row_h = min((OUT_H - 170 - (40 if hidden else 0)) / len(panel), 300.0)  # one cable: not a tall thin strip
     f_title, f_sub, f_name, f_small = _font(40, True), _font(22), _font(26, True), _font(19)
     f_chip, f_big = _font(24, True), _font(40, True)
 
@@ -153,7 +156,10 @@ def render_hero(video: str, tr: Tracking, report: dict, out: str | Path, speed: 
             d.rectangle([px - 20, 0, OUT_W, OUT_H], fill=PANEL)
             d.text((px, 28), title, font=f_title, fill=INK)
             d.text((px, 82), f"{subtitle}  ·  {fs:.0f} fps, shown {1 / speed:.0f}× slower", font=f_sub, fill=DIM)
-            for i, m in enumerate(members):
+            if hidden and last:
+                sts = sorted({by[m.name]["ladder"]["status"] for m in hidden})
+                d.text((px, OUT_H - 52), f"+ {len(hidden)} more: {', '.join(sts)}", font=f_sub, fill=DIM)
+            for i, m in enumerate(panel):
                 e = by[m.name]
                 lad = e["ladder"]
                 st = lad["status"]
