@@ -64,8 +64,10 @@ def running_locks(tr: Tracking, report: dict, every_s: float = 0.2) -> dict:
 
     t = tr.t
     fs = tr.timebase.fps
-    step = max(1, int(round(every_s * fs)))
-    ks = list(range(max(step, int(0.5 * fs)), tr.n_frames + 1, step))
+    dur = tr.n_frames / fs
+    # short high-speed takes (a 0.6 s string at 7000 fps) still get a dozen checkpoints
+    step = max(1, int(round(min(every_s, dur / 15) * fs)))
+    ks = list(range(max(step, int(min(0.5, dur / 3) * fs)), tr.n_frames + 1, step))
     if not ks or ks[-1] != tr.n_frames:
         ks.append(tr.n_frames)
     out = {}
