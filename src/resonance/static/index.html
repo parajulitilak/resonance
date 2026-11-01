@@ -389,8 +389,8 @@ function showReport(rep) {
       ${tensionBlock(m)}
       ${specSvg(m)}
       ${L.reasons.length ? `<div class="muted" style="margin-top:6px">${L.reasons.map(esc).join('<br>')}</div>` : ''}
-      ${L.status === 'refused' ? `<div style="margin-top:8px"><b>Re-shoot:</b> original 240 fps file, phone on a stand 1–1.5 m away,
-        perpendicular to the cable, pluck once, film 5 s.</div>` : ''}</div>`);
+      ${L.status === 'refused' ? `<div style="margin-top:8px"><b>Re-shoot:</b> the original slow-motion file (240 fps), phone
+        braced on a stand or railing, the cable side-on across the frame with both ends in view, at least 5 s of vibration.</div>` : ''}</div>`);
   });
   $('#cards').innerHTML = out.join('');
   $('#results').hidden = false; $('#agentsec').hidden = false;
