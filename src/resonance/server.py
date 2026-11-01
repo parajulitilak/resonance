@@ -147,7 +147,13 @@ def _sam_cached(video: Path, concept: str) -> dict | None:
 def _sam_store(video: Path, concept: str, result: dict) -> None:
     SAM_CACHE.mkdir(parents=True, exist_ok=True)
     key = f"{_sha(video)}_{hashlib.sha256(concept.strip().lower().encode()).hexdigest()[:8]}.json"
-    (SAM_CACHE / key).write_text(json.dumps(result))
+    (SAM_CACHE / key).write_text(json.dumps({**result, "concept": concept.strip().lower()}))
+
+
+def _saved_prompts(video: Path) -> list[str]:
+    sha = _sha(video)
+    return sorted({json.loads(f.read_text()).get("concept", "?") for d in (SAM_CACHE, SAMPLES / "sam_cache")
+                   for f in d.glob(f"{sha}_*.json")} - {"?"})
 
 
 def _samples() -> list[dict]:
@@ -295,9 +301,11 @@ def _detect(vid: Path, concept: str) -> dict:
         from .sam import find_members
         ms, extra, backend = find_members(frame, concept), [], "SAM 3.1 via Meta Model API"
     else:
+        saved = _saved_prompts(vid)
         raise DetectError("SAM 3.1 runs on-device (Apple silicon) in the field kit and is not available on this "
-                          "server; it was run in advance for the sample clips with their suggested prompt. Click the "
-                          "two ends of each cable instead.", 503)
+                          "server; it was run in advance for the sample clips" +
+                          (f" (saved prompts for this clip: {', '.join(repr(p) for p in saved)})" if saved else "") +
+                          ". Or click the two ends of each cable.", 503)
     info = {e["name"]: e for e in extra}
     result = {"backend": backend, "members": [
         {"name": m.name, "p0": [float(v) for v in m.p0], "p1": [float(v) for v in m.p1],
