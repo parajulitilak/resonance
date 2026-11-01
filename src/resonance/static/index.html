@@ -292,7 +292,7 @@ $('#detect').onclick = async () => {
   $('#status').textContent = 'Asking SAM 3.1…';
   const j = await (await fetch('/api/detect', {method:'POST', body: JSON.stringify({video, concept: $('#concept').value})})).json();
   if (j.error) { $('#status').textContent = 'SAM 3.1: ' + j.error; return; }
-  const found = j.members.map(m => ({...m, length_m:null, mass_per_m:null, tension_range:null,
+  const found = j.members.map(m => ({...m, source: 'sam', length_m:null, mass_per_m:null, tension_range:null,
                                      f0_range: currentSample && currentSample.f0_range || null}));
   $('#status').textContent = `${j.backend}: found ${found.length} × "${$('#concept').value}".`;
   members = [];  // reveal SAM's masks one cable at a time
@@ -457,7 +457,8 @@ function showAgent(j) {
     $('#signcard').innerHTML = `<div class="card ok" style="margin-top:14px"><b style="color:var(--ok)">Signed by ${esc(j.approved.by)}</b> · ${esc(j.approved.at)}
       <div class="hash">evidence sha256 ${esc(j.approved.sha256)}</div><div class="muted">Re-running the inspection voids this signature.
       <a href="/runs/${encodeURIComponent(job)}/inspection.md" download>Download report</a></div></div>`;
-  } else if (a.error || verd.length < rep.members.length + (a.actions.flags || []).length + (rep.summary ? 1 : 0)) {
+  } else if (a.error || verd.filter(v => v.answered !== false).length <
+             rep.members.length + (a.actions.flags || []).length + (rep.summary ? 1 : 0)) {
     $('#signcard').innerHTML = `<div class="card bad" style="margin-top:14px"><b>Signing disabled:</b>
       ${a.error ? 'the inspection did not finish (' + esc(a.error) + ').' : 'not every claim was independently verified.'}
       Run the inspection again.</div>`;

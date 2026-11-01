@@ -254,7 +254,7 @@ def enforce_rules(report: dict, actions: dict, mode: str) -> list[dict]:
             item["status"] = "flagged"
         vr = m.get("visual_review") or {}
         if vr and (vr.get("verdict") != "confirmed" or vr.get("both_supports_visible") is False) \
-                and "uncertain" not in item["statement"].lower():  # rule 9, enforced in code
+                and "identification of this member is uncertain" not in item["statement"].lower():  # rule 9, in code
             why = "both supports are not in view" if vr.get("verdict") == "confirmed" else f"visual review: {vr.get('verdict')}"
             item["statement"] = item["statement"].rstrip() + f" Identification of this member is uncertain ({why})."
             out.append({"member": m["name"], "rule": "uncertain identification not stated → added by code"})
@@ -348,7 +348,7 @@ def run_verifier(report: dict, actions: dict, provider: str = "baseten", raw_sin
         v = got.get(c["id"])
         ok = v is not None and str(v.get("verdict", "")).strip().lower() == "agree"
         out.append({"id": c["id"], "kind": c["kind"], "flag_index": c.get("flag_index"), "member": c["member"],
-                    "claim": c["claim"], "verdict": "agree" if ok else "disagree",
+                    "claim": c["claim"], "verdict": "agree" if ok else "disagree", "answered": v is not None,
                     "reason": (v or {}).get("reason") or err})
     if raw_sink is not None:
         raw_sink.append(text)
@@ -462,7 +462,8 @@ def approve(out_dir: str | Path, by: str) -> Path:
     rep = data["actions"].get("report") or {}
     n_claims = len(rep.get("members", [])) + len(data["actions"].get("flags", [])) + \
         (1 if (rep.get("summary") or "").strip() else 0)
-    if not rep or len(data.get("verdicts", [])) < n_claims:
+    answered = [v for v in data.get("verdicts", []) if v.get("answered", True)]
+    if not rep or len(answered) < n_claims:  # a disagreement the verifier never gave is not a verification
         raise RuntimeError("not every claim was independently verified: run the inspection again before signing")
     if (out / "approval.json").exists():
         prior = json.loads((out / "approval.json").read_text())

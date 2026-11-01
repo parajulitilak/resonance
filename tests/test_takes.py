@@ -65,3 +65,32 @@ def test_missing_verdict_never_renders_as_agrees():
                        "next_steps": []}, "flags": [], "reshoots": []}
     md = render_markdown(rep, acts, [], [], "bench")
     assert "| needs engineer |" in md and "agrees" not in md.split("## Independent")[0]
+
+
+def test_unanswered_disagreements_do_not_allow_signing(tmp_path):
+    import json
+    import pytest
+    from resonance.agent import approve
+    (tmp_path / "report.json").write_text(json.dumps({"timing": {"frames": 1, "fps": 240.0, "source": "t"},
+                                                      "members": []}))
+    report = {"summary": "s", "members": [{"name": "r1", "status": "measured", "statement": "T 25.0 N."}], "next_steps": []}
+    unanswered = [{"id": 0, "kind": "statement", "member": "r1", "verdict": "disagree", "answered": False,
+                   "reason": "model call limit reached"},
+                  {"id": 1, "kind": "summary", "member": "summary", "verdict": "disagree", "answered": False,
+                   "reason": "model call limit reached"}]
+    (tmp_path / "agent.json").write_text(json.dumps({"actions": {"flags": [], "reshoots": [], "report": report},
+                                                     "violations": [], "verdicts": unanswered, "mode": "bench"}))
+    with pytest.raises(RuntimeError, match="not every claim"):
+        approve(tmp_path, "A")
+
+
+def test_rule9_caveat_not_skipped_by_the_word_uncertainty():
+    from resonance.agent import enforce_rules
+    rep = {"members": [{"name": "m1", "ladder": {"status": "verified", "ok": True},
+                        "visual_review": {"verdict": "rejected", "what": "floor lead"}}]}
+    acts = {"report": {"summary": "s", "members": [{"name": "m1", "status": "measured",
+                                                     "statement": "Tension 19.6 N with an uncertainty of 0.4 N."}],
+                       "next_steps": []}, "flags": [], "reshoots": []}
+    v = enforce_rules(rep, acts, "bench")
+    assert "Identification of this member is uncertain" in acts["report"]["members"][0]["statement"]
+    assert any("uncertain identification" in x["rule"] for x in v)

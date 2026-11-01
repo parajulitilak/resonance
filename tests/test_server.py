@@ -21,6 +21,7 @@ def srv(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "JOBS", {})
     monkeypatch.setattr(server, "PUBLIC", True)
     monkeypatch.setattr(server, "_calls", [])
+    monkeypatch.setattr(server, "_client_calls", {})
     for d in ("seed-run", "visitor-run"):
         (server.RUNS / d).mkdir(parents=True)
         (server.RUNS / d / "report.json").write_text(json.dumps({"timing": {}, "members": []}))
@@ -97,3 +98,19 @@ def test_model_budget_is_charged_per_call(monkeypatch):
 def test_bad_numbers_are_rejected_not_crashing(srv):
     assert call(srv + "/api/check?video=x.mp4&capture_fps=abc")[0] == 400
     assert call(srv + "/api/analyze", b'{"video": "missing.mp4", "members": [{}]}')[0] == 400
+
+
+def test_negative_length_suffix_range_and_per_client_limit(srv, monkeypatch):
+    import socket
+    from urllib.parse import urlparse
+    host, port = urlparse(srv).hostname, urlparse(srv).port
+    with socket.create_connection((host, port), timeout=10) as sock:
+        sock.sendall(b"POST /api/review HTTP/1.1\r\nHost: x\r\nContent-Length: -1\r\n\r\n{}")
+        assert b" 413 " in sock.recv(200)
+    (server.RUNS / "visitor-run" / "hero.mp4").write_bytes(bytes(range(256)) * 4)
+    code, tail = call(srv + "/runs/visitor-run/hero.mp4", headers={"Range": "bytes=-10"})
+    assert code == 206 and tail == (bytes(range(256)) * 4)[-10:]
+    monkeypatch.setattr(server, "PER_CLIENT_PER_HOUR", 2)
+    for _ in range(2):
+        assert call(srv + "/api/review", b'{"video": "none.mp4", "members": []}')[0] == 400
+    assert call(srv + "/api/review", b'{"video": "none.mp4", "members": []}')[0] == 429

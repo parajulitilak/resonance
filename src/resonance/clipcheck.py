@@ -78,6 +78,8 @@ def global_shake(path: str, width: int = 320, max_frames: int = 3000, grid: tupl
     for i, img in enumerate(read_frames(path, width=width, gray=True)):
         if i % stride:
             continue
+        if len(pos) >= max_frames:  # also bounds clips whose container gives no frame count
+            break
         g = img.astype(np.float32)
         if tiles is None:  # (re)key: textured tiles of this frame, away from the members
             h, w = g.shape

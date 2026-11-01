@@ -46,7 +46,9 @@ JOBS: dict[str, dict] = {}
 REVIEWS: dict[tuple, dict] = {}      # visual-review verdicts made by this server, never taken from a client
 SEEDED: set[str] = set()             # recorded example runs: read-only on a public server
 _calls: list[float] = []
+_client_calls: dict[tuple, list[float]] = {}
 _lock = threading.Lock()
+PER_CLIENT_PER_HOUR = 6              # reviews and inspections each, per client address
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$")
 
 
@@ -60,6 +62,20 @@ def _model_call_allowed() -> bool:
         if len(_calls) >= MODEL_CALLS_PER_HOUR:
             return False
         _calls.append(now)
+        return True
+
+
+def _client_allowed(addr: str, kind: str) -> bool:
+    """Public mode: one visitor cannot spend everyone's hourly budget."""
+    if not PUBLIC:
+        return True
+    with _lock:
+        now = time.time()
+        log = [t for t in _client_calls.get((addr, kind), []) if now - t < 3600]
+        if len(log) >= PER_CLIENT_PER_HOUR:
+            _client_calls[(addr, kind)] = log
+            return False
+        _client_calls[(addr, kind)] = log + [now]
         return True
 
 
@@ -88,11 +104,14 @@ def _running(key: str) -> int:
 
 
 def _housekeep() -> None:
-    """Public mode: keep uploads under a quota and the number of visitor runs bounded (oldest go first)."""
+    """Public mode: keep uploads under a quota and the number of visitor runs bounded (oldest go first). Clips
+    being measured or uploaded in the last 30 minutes are never removed."""
     if not PUBLIC:
         return
-    ups = sorted((p for p in UPLOADS.glob("*") if p.is_file() and not p.name.startswith("sample-")),
-                 key=lambda p: p.stat().st_mtime)
+    busy = {j.get("video") for j in JOBS.values() if j.get("stage") in ("queued", "tracking", "analysing", "rendering")}
+    fresh = time.time() - 1800
+    ups = sorted((p for p in UPLOADS.glob("*") if p.is_file() and not p.name.startswith("sample-")
+                  and p.name not in busy and p.stat().st_mtime < fresh), key=lambda p: p.stat().st_mtime)
     total = sum(p.stat().st_size for p in ups)
     while ups and total > UPLOAD_QUOTA:
         p = ups.pop(0)
@@ -104,8 +123,9 @@ def _housekeep() -> None:
         JOBS.pop(d.name, None)
 
 
-def _review_key(video: str, name: str, p0, p1) -> tuple:
-    return (video, name, tuple(round(float(v)) for v in p0), tuple(round(float(v)) for v in p1))
+def _review_key(video: str, p0, p1) -> tuple:
+    """Verdicts follow the candidate's position, not its (editable) name."""
+    return (video, tuple(round(float(v)) for v in p0), tuple(round(float(v)) for v in p1))
 
 
 def _sha(path: Path) -> str:
@@ -169,11 +189,14 @@ def _file(h: BaseHTTPRequestHandler, path: Path, ctype: str) -> None:
     rng = h.headers.get("Range")
     if rng and ctype.startswith("video/"):  # Safari needs byte ranges for video
         m = re.match(r"bytes=(\d*)-(\d*)$", rng.strip())
-        if not m:
+        if not m or not (m.group(1) or m.group(2)):
             h.send_error(416)
             return
-        start = int(m.group(1) or 0)
-        end = min(int(m.group(2)) if m.group(2) else size - 1, size - 1)
+        if m.group(1):
+            start = int(m.group(1))
+            end = min(int(m.group(2)) if m.group(2) else size - 1, size - 1)
+        else:  # "bytes=-N": the last N bytes
+            start, end = max(0, size - int(m.group(2))), size - 1
         if start > end:
             h.send_error(416)
             return
@@ -202,17 +225,27 @@ def _run_job(job_id: str, video: Path, spec: dict) -> None:
     try:
         job.update(stage="tracking")
         members, names = [], set()
-        num = lambda v: float(v) if v is not None and math.isfinite(float(v)) else None  # noqa: E731
+        def pos(v):  # lengths and masses: positive and finite, or not given
+            return float(v) if v is not None and math.isfinite(float(v)) and float(v) > 0 else None
+
+        def rng(v):  # priors: two positive, ordered numbers, or not given
+            if not v or len(v) != 2:
+                return None
+            lo, hi = float(v[0]), float(v[1])
+            return (lo, hi) if 0 < lo < hi and math.isfinite(hi) else None
+
+        def pair(v):
+            return (float(v[0]), float(v[1])) if v and len(v) == 2 else None
+
         for k, m in enumerate(spec["members"][:MAX_MEMBERS]):
-            pair = lambda v: tuple(float(x) for x in v)[:2] if v and len(v) == 2 else None  # noqa: E731
-            tr_range, f_range = pair(m.get("tension_range")), pair(m.get("f0_range"))
+            tr_range, f_range = rng(m.get("tension_range")), rng(m.get("f0_range"))
             name = str(m.get("name") or f"m{k + 1}")[:40]
             while name in names:  # names key every result: keep them unique
                 name += "'"
             names.add(name)
             members.append(Member(name, pair(m["p0"]), pair(m["p1"]),
                                   half_width=min(max(float(m.get("half_width") or 10), 3.0), 80.0),
-                                  length_m=num(m.get("length_m")), mass_per_m=num(m.get("mass_per_m")),
+                                  length_m=pos(m.get("length_m")), mass_per_m=pos(m.get("mass_per_m")),
                                   tension_range=tr_range, f0_range=f_range))
         anchor = tuple(spec["anchor"]) if spec.get("anchor") else None
         tr = track(str(video), members, anchor=anchor, capture_fps=spec.get("capture_fps"))
@@ -220,10 +253,12 @@ def _run_job(job_id: str, video: Path, spec: dict) -> None:
         from .analyze import picture_motion
         rep = analyze_tracking(tr, picture_motion_px=None if anchor else picture_motion(str(video), members))
         rep["video"] = str(video)
-        for mem, e in zip(members, rep["members"]):  # the server's own visual review travels with the member
-            r = REVIEWS.get(_review_key(video.name, mem.name, mem.p0, mem.p1))
+        for mem, src, e in zip(members, spec["members"], rep["members"]):  # the server's own verdicts only
+            r = REVIEWS.get(_review_key(video.name, mem.p0, mem.p1))
             if r:
-                e["visual_review"] = r
+                e["visual_review"] = {**r, "name": mem.name}
+            elif src.get("source") == "sam":  # proposed by SAM but never reviewed by this server
+                e["visual_review"] = {"name": mem.name, "verdict": "unreviewed", "reason": "not reviewed by this server"}
         if spec.get("site_notes"):
             rep["site_notes"] = str(spec["site_notes"])[:1000]
         save(rep, out)
@@ -382,7 +417,7 @@ class Handler(BaseHTTPRequestHandler):
                 return _json(self, {"error": "the video could not be read"}, 415)
             _housekeep()
             return _json(self, {"video": name, "width": info.width, "height": info.height, "fps": info.fps})
-        if n > MAX_BODY:
+        if not 0 <= n <= MAX_BODY:  # a negative length would read until the socket closes
             return _json(self, {"error": "request too large"}, 413)
         try:
             body = json.loads(self.rfile.read(n) or b"{}")
@@ -448,6 +483,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 502)
         if u.path == "/api/review":
+            if not _client_allowed(self.client_address[0], "review"):
+                return _json(self, {"error": "review limit for this hour reached on the public demo"}, 429)
             vid = _video(body.get("video"))
             if not vid or not isinstance(body.get("members"), list):
                 return _json(self, {"error": "unknown clip or no members"}, 400)
@@ -461,7 +498,7 @@ class Handler(BaseHTTPRequestHandler):
                              tuple(float(v) for v in m["p1"])[:2]) for m in body["members"]]
                 res = review(frame, ms, context=str(body.get("context", ""))[:1000])
                 for m, r in zip(ms, res):  # kept on the server: a measurement only trusts verdicts it made itself
-                    REVIEWS[_review_key(vid.name, m.name, m.p0, m.p1)] = r
+                    REVIEWS[_review_key(vid.name, m.p0, m.p1)] = r
                 return _json(self, {"reviews": res})
             except Exception as e:  # noqa: BLE001
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 502)
@@ -476,6 +513,8 @@ class Handler(BaseHTTPRequestHandler):
                 return _json(self, {"error": "an inspection of this run is already running"}, 409)
             if PUBLIC and _running("inspect_stage") >= MAX_RUNNING:
                 return _json(self, {"error": "the demo server is busy: try again in a minute"}, 429)
+            if not _client_allowed(self.client_address[0], "inspect"):
+                return _json(self, {"error": "inspection limit for this hour reached on the public demo"}, 429)
             mode = "field" if body.get("mode") == "field" else "bench"
             job["inspect_stage"] = "running"
             threading.Thread(target=_run_inspect, args=(job_id, str(body.get("context", ""))[:2000], mode,
