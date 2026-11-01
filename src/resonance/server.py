@@ -99,7 +99,7 @@ def _looks_like_video(path: Path) -> bool:
 
 
 def _running(key: str) -> int:
-    busy = {"stage": ("queued", "tracking", "analysing", "rendering"), "inspect_stage": ("running",)}[key]
+    busy = {"stage": ("queued", "tracking", "analysing", "rendering", "autopilot"), "inspect_stage": ("running",)}[key]
     return sum(j.get(key) in busy for j in JOBS.values())
 
 
@@ -270,6 +270,97 @@ def _run_job(job_id: str, video: Path, spec: dict) -> None:
         job.update(stage="error", error=f"{type(e).__name__}: {e}", trace=traceback.format_exc()[-2000:])
 
 
+class DetectError(Exception):
+    def __init__(self, msg: str, code: int):
+        super().__init__(msg)
+        self.code = code
+
+
+def _detect(vid: Path, concept: str) -> dict:
+    """SAM 3.1 candidates for the clip's first frame: a saved result, on-device MLX, or the Meta Model API."""
+    from . import sam_local
+    from .video import read_frames
+    cached = _sam_cached(vid, concept)
+    if cached:
+        was = cached.get("backend", "SAM 3.1").replace("on this computer", "on-device")
+        cached["backend"] = f"{was}, result saved from an earlier run"
+        return cached
+    frame = next(iter(read_frames(str(vid))))
+    if sam_local.available():  # on-device SAM 3.1 (MLX): real masks
+        ms, extra = sam_local.find_members(frame, concept)
+        backend = "SAM 3.1 on this computer (MLX)"
+    elif os.environ.get("MODEL_API_KEY"):  # Meta Model API: boxes
+        if not _model_call_allowed():
+            raise DetectError("model call limit reached for this hour on the public demo", 429)
+        from .sam import find_members
+        ms, extra, backend = find_members(frame, concept), [], "SAM 3.1 via Meta Model API"
+    else:
+        raise DetectError("SAM 3.1 runs on-device (Apple silicon) in the field kit and is not available on this "
+                          "server; it was run in advance for the sample clips with their suggested prompt. Click the "
+                          "two ends of each cable instead.", 503)
+    info = {e["name"]: e for e in extra}
+    result = {"backend": backend, "members": [
+        {"name": m.name, "p0": [float(v) for v in m.p0], "p1": [float(v) for v in m.p1],
+         "half_width": m.half_width, **{k: v for k, v in info.get(m.name, {}).items() if k != "name"}}
+        for m in ms]}
+    _sam_store(vid, concept, result)
+    return result
+
+
+def _run_autopilot(job_id: str, vid: Path, notes: str) -> None:
+    """The field assistant (autopilot.py) with its tools bound to this clip and this server's own gates."""
+    from .autopilot import Toolbox, run_autopilot
+    from .clipcheck import check
+    from .review import review
+    from .video import read_frames
+    job = JOBS[job_id]
+    frame = None
+
+    def find(prompt: str) -> list[dict]:
+        try:
+            return _detect(vid, prompt)["members"]
+        except DetectError as e:
+            raise RuntimeError(str(e)) from None
+
+    def do_review(cands: list[dict]) -> list[dict]:
+        nonlocal frame
+        if frame is None:
+            frame = next(iter(read_frames(str(vid))))
+        ms = [Member(f"c{k}", tuple(c["p0"]), tuple(c["p1"])) for k, c in enumerate(cands)]
+        res = review(frame, ms, context=notes)
+        for m, r in zip(ms, res):
+            REVIEWS[_review_key(vid.name, m.p0, m.p1)] = r
+        return res
+
+    def measure(members: list[dict]) -> dict:
+        run_id = time.strftime("%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
+        JOBS[run_id] = {"id": run_id, "stage": "queued", "video": vid.name}
+        job["measuring"] = run_id
+        _run_job(run_id, vid, {"members": members, "site_notes": notes})
+        r = JOBS[run_id]
+        if r.get("stage") != "done":
+            return {"run": run_id, "error": r.get("error", "measurement failed")}
+        out = []
+        for e in r["report"]["members"]:
+            lad, ten = e["ladder"], e.get("tension") or {}
+            out.append({"name": e["name"], "status": lad["status"], "f0_hz": lad["f0_hz"],
+                        "tension_n": ten.get("value_n"), "reasons": lad["reasons"][:2]})
+        return {"run": run_id, "members": out}
+
+    def on_step(step: dict) -> None:
+        job["steps"].append(step)
+
+    try:
+        tb = Toolbox(check=lambda: check(str(vid)), find=find, review=do_review, measure=measure, notes=notes)
+        res = run_autopilot(tb, on_step=on_step)
+        for rid in res["runs"]:  # kept with each run, so the replay shows how it was made
+            if (RUNS / rid).exists():
+                (RUNS / rid / "autopilot.json").write_text(json.dumps(res, default=float, indent=1))
+        job.update(stage="done", run=res["run"], runs=res["runs"], summary=res["summary"])
+    except Exception as e:  # noqa: BLE001
+        job.update(stage="error", error=f"{type(e).__name__}: {e}")
+
+
 def _run_inspect(job_id: str, context: str, mode: str, baseline_id: str | None = None) -> None:
     job = JOBS[job_id]
     try:
@@ -313,6 +404,8 @@ def _load_run(job_id: str) -> dict | None:
         job["approved"] = json.loads((d / "approval.json").read_text())
     if (d / "baseline.txt").exists():
         job["baseline"] = (d / "baseline.txt").read_text().strip()
+    if (d / "autopilot.json").exists():
+        job["autopilot"] = json.loads((d / "autopilot.json").read_text())
     JOBS[job_id] = job
     return job
 
@@ -448,40 +541,28 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=_run_job, args=(job_id, video, body), daemon=True).start()
             return _json(self, {"job": job_id})
         if u.path == "/api/detect":
+            vid = _video(body.get("video"))
+            if not vid:
+                return _json(self, {"error": "unknown clip"}, 404)
             try:
-                from . import sam_local
-                from .video import read_frames
-                vid = _video(body.get("video"))
-                if not vid:
-                    return _json(self, {"error": "unknown clip"}, 404)
-                concept = str(body.get("concept", "rope"))[:60]
-                cached = _sam_cached(vid, concept)
-                if cached:
-                    was = cached.get("backend", "SAM 3.1").replace("on this computer", "on-device")
-                    cached["backend"] = f"{was}, result saved from an earlier run"
-                    return _json(self, cached)
-                frame = next(iter(read_frames(str(vid))))
-                if sam_local.available():  # on-device SAM 3.1 (MLX): real masks
-                    ms, extra = sam_local.find_members(frame, concept)
-                    backend = "SAM 3.1 on this computer (MLX)"
-                elif os.environ.get("MODEL_API_KEY"):  # Meta Model API: boxes
-                    if not _model_call_allowed():
-                        return _json(self, {"error": "model call limit reached for this hour on the public demo"}, 429)
-                    from .sam import find_members
-                    ms, extra, backend = find_members(frame, concept), [], "SAM 3.1 via Meta Model API"
-                else:
-                    return _json(self, {"error": "SAM 3.1 runs on-device (Apple silicon) in the field kit and is not "
-                                                 "available on this server; it was run in advance for the sample "
-                                                 "clips. Click the two ends of each cable instead."}, 503)
-                info = {e["name"]: e for e in extra}
-                result = {"backend": backend, "members": [
-                    {"name": m.name, "p0": [float(v) for v in m.p0], "p1": [float(v) for v in m.p1],
-                     "half_width": m.half_width, **{k: v for k, v in info.get(m.name, {}).items() if k != "name"}}
-                    for m in ms]}
-                _sam_store(vid, concept, result)
-                return _json(self, result)
+                return _json(self, _detect(vid, str(body.get("concept", "rope"))[:60]))
+            except DetectError as e:
+                return _json(self, {"error": str(e)}, e.code)
             except Exception as e:  # noqa: BLE001
                 return _json(self, {"error": f"{type(e).__name__}: {e}"}, 502)
+        if u.path == "/api/autopilot":
+            vid = _video(body.get("video"))
+            if not vid:
+                return _json(self, {"error": "unknown clip"}, 404)
+            if not _client_allowed(self.client_address[0], "autopilot"):
+                return _json(self, {"error": "field-assistant limit for this hour reached on the public demo"}, 429)
+            if PUBLIC and _running("stage") >= MAX_RUNNING:
+                return _json(self, {"error": "the demo server is busy: try again in a minute"}, 429)
+            job_id = "auto-" + time.strftime("%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
+            JOBS[job_id] = {"id": job_id, "stage": "autopilot", "steps": [], "video": vid.name}
+            threading.Thread(target=_run_autopilot, args=(job_id, vid, str(body.get("notes", ""))[:2000]),
+                             daemon=True).start()
+            return _json(self, {"job": job_id})
         if u.path == "/api/review":
             if not _client_allowed(self.client_address[0], "review"):
                 return _json(self, {"error": "review limit for this hour reached on the public demo"}, 429)

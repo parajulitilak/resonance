@@ -115,7 +115,9 @@
       <input id="concept" value="rope" style="width:150px" list="concepts" title="what to look for: 'suspension cable' or 'vertical cable' for bridge hangers, 'rope' for ropes, 'horizontal bar' or 'rod' for thick lab cables">
       <datalist id="concepts"><option value="suspension cable"><option value="vertical cable"><option value="rope"><option value="cable"><option value="horizontal bar"><option value="rod"></datalist>
       <button id="anchorBtn" class="ghost" disabled>Mark static anchor</button>
+      <button id="autoBtn" class="ghost" disabled title="Muse Spark Open runs the whole measurement with the same tools and gates">Let the field assistant do it</button>
     </div>
+    <div id="autolog" style="margin-bottom:10px"></div>
     <input id="notes" placeholder="What was filmed? e.g. hangers of a suspension footbridge, steel wire ropes" style="width:100%;margin-bottom:10px">
     <p class="muted">Or click the two ends of each cable on the frame. Length, mass per metre and a rough tension range
       unlock tension; without them you still get frequencies and change detection.</p>
@@ -131,6 +133,7 @@
 
   <section class="full" id="results" hidden>
     <h2><span class="step">3</span>Measurement</h2>
+    <div id="autoreplay" style="margin-bottom:10px"></div>
     <div class="cols" style="grid-template-columns:minmax(0,1.25fr) minmax(0,1fr)">
       <video id="hero" controls playsinline></video>
       <div>
@@ -256,9 +259,47 @@ function openClip(j, label) {
   $('#clipinfo').textContent = `${label} · ${j.width}×${j.height} · container says ${j.fps.toFixed(1)} fps (true timing is measured per frame)`;
   $('#frame').src = '/api/frame?video=' + encodeURIComponent(video); $('#stage').hidden = false;
   $('#frame').onload = () => draw();
-  $('#detect').disabled = false; $('#anchorBtn').disabled = false; renderMembers();
+  $('#detect').disabled = false; $('#anchorBtn').disabled = false; $('#autoBtn').disabled = false; renderMembers();
   checkClip();
 }
+
+function stepLine(s) {
+  const r = s.result || {}, a = s.args || {};
+  const count = (xs, k) => Object.entries(xs.reduce((o, x) => (o[x[k]] = (o[x[k]] || 0) + 1, o), {}))
+    .map(([v, n]) => `${n} ${v}`).join(', ');
+  let arg = '', txt = r.error || '';
+  if (!txt && s.tool === 'check_clip') txt = `${r.status}: ${r.summary || ''}`;
+  if (s.tool === 'find_cables') { arg = JSON.stringify(a.prompt || ''); if (!txt) txt = `${(r.candidates || []).length} candidates`; }
+  if (s.tool === 'review_candidates') { arg = `${(a.ids || []).length}`; if (!txt) txt = count(r.reviews || [], 'verdict'); }
+  if (s.tool === 'measure') { arg = `${(a.ids || []).length}`;
+    if (!txt) txt = `run ${r.run}: ` + count(r.members || [], 'status') +
+      (r.values_dropped ? ' · dropped (not in the notes): ' + Object.keys(r.values_dropped).join(', ') : ''); }
+  if (s.tool === 'finish') txt = a.summary || '';
+  return `<div class="tool">${esc(s.tool)}(<span>${esc(arg)}</span>) → <span style="color:var(--ink)">${esc(txt)}</span></div>`;
+}
+
+$('#autoBtn').onclick = async () => {
+  $('#autoBtn').disabled = true;
+  $('#autolog').innerHTML = '<div class="muted">Muse Spark Open is working: it checks the clip, chooses SAM 3.1 prompts, has each candidate reviewed and measures the confirmed ones.</div>';
+  let r;
+  try { r = await (await fetch('/api/autopilot', {method:'POST', body: JSON.stringify({video, notes: $('#notes').value})})).json(); }
+  catch (e) { r = {error: String(e)}; }
+  if (r.error) { $('#autolog').textContent = r.error; $('#autoBtn').disabled = false; return; }
+  const tick = async () => {
+    const j = await (await fetch('/api/jobs/' + encodeURIComponent(r.job))).json();
+    $('#autolog').innerHTML = `<div class="card">${(j.steps || []).map(stepLine).join('')}` +
+      (j.stage === 'autopilot' ? `<div class="muted">${j.measuring ? 'measuring…' : 'thinking…'}</div>` : '') + '</div>';
+    if (j.stage === 'done') {
+      $('#autolog').innerHTML += `<div class="card ok"><b>Field assistant:</b> ${esc(j.summary || '')}` +
+        (j.run ? `<br><a href="?run=${encodeURIComponent(j.run)}">Open the measurement</a> to run the inspection and sign.` : '') +
+        ((j.runs || []).length > 1 ? ` Other runs: ${j.runs.filter(x => x !== j.run).map(x => `<a href="?run=${encodeURIComponent(x)}">${esc(x)}</a>`).join(', ')}` : '') + '</div>';
+      $('#autoBtn').disabled = false; return;
+    }
+    if (j.stage === 'error') { $('#autolog').innerHTML += `<div class="card bad">${esc(j.error)}</div>`; $('#autoBtn').disabled = false; return; }
+    setTimeout(tick, 1500);
+  };
+  tick();
+};
 
 async function checkClip() {
   $('#checks').innerHTML = '<div class="muted">Checking the clip: true frame rate, timing, camera shake, exposure…</div>';
@@ -499,7 +540,7 @@ if (params.get('video') && !params.get('run')) {
   $('#frame').onload = () => { vw = $('#frame').naturalWidth; vh = $('#frame').naturalHeight;
     $('#clipinfo').textContent = `${video} · ${vw}×${vh}`; draw(); };
   $('#frame').src = '/api/frame?video=' + encodeURIComponent(video); $('#stage').hidden = false;
-  $('#detect').disabled = false; $('#anchorBtn').disabled = false; renderMembers(); checkClip();
+  $('#detect').disabled = false; $('#anchorBtn').disabled = false; $('#autoBtn').disabled = false; renderMembers(); checkClip();
   if (params.get('notes')) $('#notes').value = params.get('notes');
   if (params.get('detect')) { $('#concept').value = params.get('detect'); $('#detect').click(); }
 }
@@ -510,6 +551,8 @@ if (params.get('run')) {
     $('#clipsec').hidden = true; $('#cablesec').hidden = true;
     showReport(j.report); if (j.hero) { $('#hero').poster = j.hero.replace('.mp4', '.jpg'); $('#hero').src = j.hero; } showAgent(j);
     if (j.baseline) loadRuns(j.baseline);
+    if (j.autopilot) $('#autoreplay').innerHTML = `<details open><summary class="muted">Made by the field assistant (Muse Spark Open): its tool calls</summary>
+      <div class="card">${(j.autopilot.steps || []).map(stepLine).join('')}</div></details>`;
   });
 }
 window.onresize = () => video && draw();
