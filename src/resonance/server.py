@@ -364,6 +364,8 @@ def _run_autopilot(job_id: str, vid: Path, notes: str) -> None:
         for rid in res["runs"]:  # kept with each run, so the replay shows how it was made
             if (RUNS / rid).exists():
                 (RUNS / rid / "autopilot.json").write_text(json.dumps(res, default=float, indent=1))
+            if rid in JOBS:
+                JOBS[rid]["autopilot"] = res
         job.update(stage="done", run=res["run"], runs=res["runs"], summary=res["summary"])
     except Exception as e:  # noqa: BLE001
         job.update(stage="error", error=f"{type(e).__name__}: {e}")
