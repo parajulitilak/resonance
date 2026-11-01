@@ -36,3 +36,13 @@ def test_review_keeps_member_order(monkeypatch):
     monkeypatch.setattr(rv, "chat", _reply('{"is_tensioned_member": true}'))
     ms = [Member(f"m{i}", (10 * i, 0), (10 * i, 100)) for i in range(1, 6)]
     assert [r["name"] for r in rv.review(FRAME, ms)] == ["m1", "m2", "m3", "m4", "m5"]
+
+
+def test_server_json_has_no_nan():
+    import json
+    import math
+
+    from resonance.server import _finite
+    rep = {"members": [{"ladder": {"f0_hz": math.nan, "f0_sigma_hz": math.inf, "modes": []}, "peaks": [1.5]}]}
+    out = json.dumps(_finite(rep), allow_nan=False)
+    assert '"f0_hz": null' in out and '"f0_sigma_hz": null' in out and "1.5" in out

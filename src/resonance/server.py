@@ -84,8 +84,19 @@ def _replays() -> list[dict]:
     return [r for r in json.loads(f.read_text()) if (RUNS / r["id"] / "report.json").exists()] if f.exists() else []
 
 
+def _finite(o):
+    """NaN and infinity are not JSON: browsers reject the whole response. Send null instead."""
+    if isinstance(o, float):
+        return o if o == o and abs(o) != float("inf") else None
+    if isinstance(o, dict):
+        return {k: _finite(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_finite(v) for v in o]
+    return o
+
+
 def _json(h: BaseHTTPRequestHandler, obj, code: int = 200) -> None:
-    body = json.dumps(obj, default=float).encode()
+    body = json.dumps(_finite(json.loads(json.dumps(obj, default=float))), allow_nan=False).encode()
     h.send_response(code)
     h.send_header("Content-Type", "application/json")
     h.send_header("Content-Length", str(len(body)))
